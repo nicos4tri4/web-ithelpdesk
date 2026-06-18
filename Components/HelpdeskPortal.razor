@@ -1,0 +1,1710 @@
+@using HelpdeskApp.Models.Entities
+@using Microsoft.EntityFrameworkCore
+@using Microsoft.AspNetCore.Components.Authorization
+@implements IDisposable
+@inject HelpdeskApp.Data.AppDbContext DbContext
+@inject Microsoft.AspNetCore.Hosting.IWebHostEnvironment Env
+@inject AuthenticationStateProvider AuthStateProvider
+@inject Microsoft.JSInterop.IJSRuntime JS
+@inject HelpdeskApp.Services.TicketPresenceService PresenceService
+
+<style>
+    .skeleton-box {
+        display: inline-block;
+        border-radius: 6px;
+        background: linear-gradient(90deg, rgba(200,200,200,0.5) 25%, rgba(240,240,240,0.8) 50%, rgba(200,200,200,0.5) 75%);
+        background-size: 400% 100%;
+        animation: shimmerWave 1.2s ease-in-out infinite;
+    }
+    @@keyframes shimmerWave {
+        0% { background-position: 100% 0; }
+        100% { background-position: -100% 0; }
+    }
+
+    .pie-slice {
+        transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275), opacity 0.3s, stroke-width 0.3s;
+        cursor: pointer;
+        transform-origin: 16px 16px;
+        animation: drawPie 1.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+    }
+    @@keyframes drawPie {
+        0% { stroke-dasharray: 0 100; }
+    }
+    .pie-slice:hover {
+        transform: scale(1.08);
+        stroke-width: 34;
+        opacity: 0.9;
+    }
+    .legend-clickable {
+        cursor: pointer;
+        transition: all 0.2s;
+        padding: 6px 8px;
+        margin: -6px -8px;
+        border-radius: 6px;
+    }
+    .legend-clickable:hover {
+        background-color: #f8f9fa;
+    }
+    .filtered-out {
+        opacity: 0.2;
+    }
+    
+    .typing-indicator {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 8px 12px;
+        background-color: #e9ecef;
+        border-radius: 12px;
+        width: fit-content;
+    }
+    .typing-dot {
+        width: 6px;
+        height: 6px;
+        background-color: #6c757d;
+        border-radius: 50%;
+        animation: typing 1.4s infinite ease-in-out both;
+    }
+    .typing-dot:nth-child(1) { animation-delay: -0.32s; }
+    .typing-dot:nth-child(2) { animation-delay: -0.16s; }
+    @@keyframes typing {
+        0%, 80%, 100% { transform: scale(0); }
+        40% { transform: scale(1); }
+    }
+
+    .empty-state-icon {
+        animation: float 3s ease-in-out infinite;
+    }
+    @@keyframes float {
+        0% { transform: translateY(0px); }
+        50% { transform: translateY(-15px); }
+    }
+    
+    .cursor-pointer { cursor: pointer; }
+    .hover-bg-light:hover { background-color: rgba(0,0,0,0.02) !important; }
+    .kanban-card { transition: all 0.2s ease-in-out; }
+    .kanban-card:hover { transform: translateY(-3px); box-shadow: 0 10px 20px rgba(0,0,0,0.08) !important; }
+    .kanban-card:hover .kanban-hover-actions { display: block !important; }
+    .kanban-column { transition: width 0.3s ease; }
+</style>
+
+<div class="fade-in">
+    @if (isSubmitting)
+    {
+        <div class="loading-overlay">
+            <div class="custom-spinner"></div>
+            <div class="fw-bold text-primary">Processing...</div>
+        </div>
+    }
+
+    @if (!string.IsNullOrEmpty(previewImageUrl))
+    {
+        <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.8); z-index: 1050;">
+            <div class="modal-dialog modal-xl modal-dialog-centered">
+                <div class="modal-content bg-transparent border-0">
+                    <div class="modal-header border-0 p-2 justify-content-end">
+                        <button type="button" class="btn btn-light rounded-circle shadow-sm" @onclick="() => previewImageUrl = null" aria-label="Close"><i class="fas fa-times"></i></button>
+                    </div>
+                    <div class="modal-body text-center p-0">
+                        <img src="@previewImageUrl" class="img-fluid rounded shadow" style="max-height: 85vh;" />
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+        @if (selectedRequest != null)
+    {
+        var isAdminOrPic = (view == "admin_dashboard" || view == "pic_dashboard");
+        <div class="modal d-block" tabindex="-1" style="background-color: rgba(0,0,0,0.5); z-index: 1040;">
+            <div class="modal-dialog modal-lg modal-dialog-centered modal-dialog-scrollable">
+                <div class="modal-content border-0 shadow">
+                    <div class="modal-header bg-light">
+                        <h5 class="modal-title fw-bold text-dark"><i class="fas fa-ticket-alt text-primary me-2"></i>Request Details #@(!string.IsNullOrEmpty(selectedRequest.QueueNumber) ? selectedRequest.QueueNumber : selectedRequest.Id.Substring(0, 8))</h5>
+                        <button type="button" class="btn-close" @onclick="() => SetSelectedRequest(null)"></button>
+                    </div>
+                    <div class="modal-body p-4">
+                        @{
+                            var viewers = PresenceService.GetViewers(selectedRequest.Id).Where(v => v != CurrentUserName).ToList();
+                            if (viewers.Any())
+                            {
+                                <div class="alert alert-warning py-2 small mb-3 d-flex align-items-center gap-2 fade-in">
+                                    <span>👀</span>
+                                    <span><strong>@string.Join(", ", viewers)</strong> @(viewers.Count > 1 ? "are" : "is") currently viewing this ticket.</span>
+                                </div>
+                            }
+                        }
+
+                        <p><strong>Requester:</strong> @selectedRequest.RequesterName</p>
+                        <p><strong>Description:</strong> @selectedRequest.Description</p>
+                        <p>
+                            <strong>Status:</strong> <span class="badge @GetStatusBadgeClass(selectedRequest.Status)">@selectedRequest.Status</span>
+                            <strong class="ms-3">PIC:</strong> 
+                            @if (!string.IsNullOrEmpty(selectedRequest.AssignedResource))
+                            {
+                                @foreach (var pic in selectedRequest.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <span class="badge bg-light text-dark border text-secondary me-1"><i class="fas fa-user-cog"></i> @pic.Trim()</span>
+                                }
+                            }
+                            else
+                            {
+                                <span class="text-muted small fst-italic">Unassigned</span>
+                            }
+                        </p>                        
+                        @if (isAdminOrPic)
+                        {
+                            <div class="mb-3 d-flex align-items-center gap-2">
+                                <strong class="mb-0" style="min-width: 80px;">Tags:</strong>
+                                <div class="input-group input-group-sm" style="max-width: 300px;">
+                                    <span class="input-group-text bg-light"><i class="fas fa-tags text-secondary"></i></span>
+                                    <input type="text" class="form-control form-control-sm" placeholder="e.g. Bug, Network" value="@selectedRequest.Tags" @onchange="@(e => { selectedRequest.Tags = e.Value?.ToString(); DbContext.SaveChanges(); })" />
+                                </div>
+                                <small class="text-muted fst-italic ms-1" style="font-size: 0.7rem;">(Comma separated)</small>
+                            </div>
+                            @if (!string.IsNullOrEmpty(selectedRequest.Tags))
+                            {
+                                <div class="mb-3">
+                                    @foreach (var tag in selectedRequest.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                    {
+                                        <span class="badge bg-secondary bg-opacity-75 me-1 fw-normal">#@tag.Trim()</span>
+                                    }
+                                </div>
+                            }
+                        }
+                        else if (!string.IsNullOrEmpty(selectedRequest.Tags))
+                        {
+                            <div class="mb-3">
+                                <strong>Tags:</strong>
+                                @foreach (var tag in selectedRequest.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                {
+                                    <span class="badge bg-secondary bg-opacity-75 me-1 fw-normal">#@tag.Trim()</span>
+                                }
+                            </div>
+                        }
+                        @if (!string.IsNullOrEmpty(selectedRequest.AttachmentUrl))
+                        {
+                            <div class="mb-3 bg-light p-2 rounded-3 border">
+                                <span class="fw-bold text-dark d-block mb-2 small"><i class="fas fa-paperclip text-secondary"></i> Attachment Evidence</span>
+                                <div class="position-relative d-inline-block cursor-pointer overflow-hidden rounded-3 border shadow-sm" style="width: 120px; height: 80px;" @onclick="() => previewImageUrl = selectedRequest.AttachmentUrl">
+                                    <img src="@selectedRequest.AttachmentUrl" alt="Attachment" class="w-100 h-100" style="object-fit: cover;" />
+                                    <div class="position-absolute top-50 start-50 translate-middle bg-dark bg-opacity-75 text-white rounded-circle d-flex justify-content-center align-items-center shadow" style="width: 30px; height: 30px;">
+                                        <i class="fas fa-search-plus small"></i>
+                                    </div>
+                                </div>
+                            </div>
+                        }
+
+                        <h6 class="fw-bold text-dark mt-4 border-bottom pb-2">Messages / Follow-up</h6>
+                        <div class="mb-3" style="max-height: 250px; overflow-y: auto;">
+                            @if (selectedRequest.FollowUpNotes != null && selectedRequest.FollowUpNotes.Any())
+                            {
+                                @foreach (var note in selectedRequest.FollowUpNotes.OrderBy(n => n.Date))
+                                {
+                                    <div class="bg-light p-3 rounded-3 mb-2 border shadow-sm">
+                                        <div class="small text-secondary mb-1">
+                                            <i class="fas fa-user-circle me-1"></i> <strong class="text-dark me-2">@(!string.IsNullOrEmpty(note.SenderName) ? note.SenderName : "System")</strong>
+                                            <i class="fas fa-clock"></i> @note.Date.ToString("dd/MM/yyyy HH:mm")
+                                        </div>
+                                        <div class="fw-medium text-dark">@note.Note</div>
+                                    </div>
+                                }
+                            }
+                            else
+                            {
+                                <p class="text-muted small fst-italic">No messages yet.</p>
+                            }
+                            
+                            @if (!string.IsNullOrWhiteSpace(newNote))
+                            {
+                                <div class="fade-in mt-2 mb-1">
+                                    <div class="small text-muted fst-italic mb-1">@(view == "admin_dashboard" ? "Admin is typing..." : "You are typing...")</div>
+                                    <div class="typing-indicator shadow-sm">
+                                        <div class="typing-dot"></div>
+                                        <div class="typing-dot"></div>
+                                        <div class="typing-dot"></div>
+                                    </div>
+                                </div>
+                            }
+                        </div>
+                    </div>
+                    <div class="modal-footer bg-light">
+                        <div class="input-group">
+                            <input type="text" @bind="newNote" @bind:event="oninput" class="form-control" placeholder='@(view == "admin_dashboard" ? "Write a reply (Admin)..." : "Write a reply...")' />
+                            <button @onclick="HandleSendNote" class="btn btn-primary"><i class="fas fa-paper-plane"></i> Send</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    }
+    }
+
+    @if (view == "public")
+    {
+        <nav class="navbar navbar-expand-md navbar-light bg-white bg-opacity-75 shadow-sm mb-4 sticky-top py-2 border-bottom" style="backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);">
+            <div class="container">
+                <!-- Left: Logo & Main Navigation -->
+                <div class="d-flex align-items-center gap-4">
+                    <div class="navbar-brand d-flex align-items-center gap-2 m-0 text-decoration-none">
+                        <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center shadow-sm" style="width: 40px; height: 40px;">
+                            <i class="fas fa-shield-alt fs-5"></i>
+                        </div>
+                        <div class="d-flex flex-column">
+                            <span class="fw-bold text-dark lh-1 fs-5">IT Helpdesk</span>
+                            <span class="text-secondary" style="font-size: 0.75rem;">Support Portal</span>
+                        </div>
+                    </div>
+                    
+                    <div class="d-none d-md-flex gap-2">
+                        <button @onclick='() => { activeTab = "new"; SetSelectedRequest(null); }' class="btn btn-sm rounded-pill px-3 @(activeTab == "new" ? "btn-primary shadow-sm fw-medium" : "btn-light text-secondary border-0") d-flex align-items-center gap-2 transition-all">
+                            <i class="fas fa-plus-circle"></i> New Request
+                        </button>
+                        <button @onclick='() => { activeTab = "queue"; SetSelectedRequest(null); }' class="btn btn-sm rounded-pill px-3 @(activeTab == "queue" ? "btn-primary shadow-sm fw-medium" : "btn-light text-secondary border-0") d-flex align-items-center gap-2 transition-all">
+                            <i class="fas fa-ticket-alt"></i> My Tickets
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Right: Dashboard Return Button -->
+                <div class="ms-auto d-flex align-items-center gap-2">
+                    <div class="d-md-none d-flex gap-1 me-2">
+                        <button @onclick='() => { activeTab = "new"; SetSelectedRequest(null); }' class="btn btn-sm rounded-circle @(activeTab == "new" ? "btn-primary shadow-sm" : "btn-light text-secondary")" title="New Request" style="width: 36px; height: 36px;">
+                            <i class="fas fa-plus"></i>
+                        </button>
+                        <button @onclick='() => { activeTab = "queue"; SetSelectedRequest(null); }' class="btn btn-sm rounded-circle @(activeTab == "queue" ? "btn-primary shadow-sm" : "btn-light text-secondary")" title="My Tickets" style="width: 36px; height: 36px;">
+                            <i class="fas fa-ticket-alt"></i>
+                        </button>
+                    </div>
+
+                    @if (!string.IsNullOrEmpty(loginUsername))
+                    {
+                        var isSystemAdmin = loginUsername.Equals("admin", StringComparison.OrdinalIgnoreCase) || 
+                                            (teamMembers != null && teamMembers.Any(tm => tm.Name == loginUsername && (tm.Role == "System Admin" || tm.Role == "Admin" || tm.Role == "Fullstack Developer")));
+                        
+                        <button class="btn btn-sm btn-outline-primary rounded-pill d-flex align-items-center gap-2 fw-medium bg-white shadow-sm transition-all" 
+                                @onclick='() => { view = isSystemAdmin ? "admin_dashboard" : "pic_dashboard"; activeViewType = "list"; }'>
+                            <i class="fas fa-tachometer-alt"></i> <span class="d-none d-sm-inline">Back to Dashboard</span>
+                        </button>
+                    }
+                </div>
+            </div>
+        </nav>
+
+        <div class="mx-0 mx-md-1 px-md-2 py-1 mb-2">
+
+            @if (!string.IsNullOrEmpty(successMsg) && activeTab == "queue")
+            {
+                <div class="alert alert-success d-flex align-items-center gap-3 fade-in shadow-sm rounded-3 border-success-subtle">
+                    <i class="fas fa-check-circle fs-5 text-success"></i>
+                    <span class="fw-medium">@successMsg</span>
+                </div>
+            }
+
+            @if (activeTab == "new")
+            {
+                <div class="bg-white p-3 p-sm-4 rounded-4 shadow fade-in mb-3 border border-2 border-primary border-opacity-10" style="background: linear-gradient(145deg, #ffffff, #f0f4f8) !important;">
+                    <h3 class="h5 fw-bold text-dark border-bottom pb-3 mb-4 d-flex align-items-center gap-2">
+                        <i class="fas fa-edit text-primary"></i> New Request Form
+                    </h3>
+                    @if (!string.IsNullOrEmpty(formErrorMsg))
+                    {
+                        <div class="alert alert-danger p-2 small"><i class="fas fa-exclamation-triangle"></i> @formErrorMsg</div>
+                    }
+                    <EditForm Model="formData" OnValidSubmit="HandleSubmitRequest">
+                        <DataAnnotationsValidator />
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-medium text-secondary small">Requester Full Name</label>
+                            <InputText @bind-Value="formData.RequesterName" class="form-control" placeholder="Enter your full name" readonly="true" />
+                        </div>
+                        
+                        <div class="mb-3">
+                            <label class="form-label fw-medium text-secondary small">Issue / Request Description</label>
+                            <InputTextArea @bind-Value="formData.Description" rows="4" class="form-control" placeholder="Explain the details of your issue or request..." />
+                        </div>
+
+                        <div class="row g-3 mb-4">
+                            <div class="col-md-4">
+                                <label class="form-label fw-medium text-secondary small">Related URL (Optional)</label>
+                                <InputText @bind-Value="formData.ProblemUrl" class="form-control" placeholder="e.g. https://..." />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-medium text-secondary small">Target Date</label>
+                                <InputDate @bind-Value="formData.TargetDelivery" class="form-control" />
+                            </div>
+                            <div class="col-md-4">
+                                <label class="form-label fw-medium text-secondary small">Attachment (Optional)</label>
+                                <InputFile OnChange="HandleFileSelected" class="form-control" accept="image/*" />
+                                @if (!string.IsNullOrEmpty(formData.AttachmentName))
+                                {
+                                    <div class="mt-2 small text-success"><i class="fas fa-check"></i> Selected: @formData.AttachmentName</div>
+                                }
+                            </div>
+                        </div>
+
+                        <div class="pt-3 mt-4 border-top text-end">
+                            <button type="submit" class="btn btn-primary px-4 fw-medium soft-shadow-hover btn-interactive d-flex align-items-center justify-content-center gap-2 d-inline-flex">
+                                <i class="fas fa-paper-plane"></i> Submit Request
+                            </button>
+                        </div>
+                    </EditForm>
+                </div>
+            }
+            else
+            {
+                <div class="bg-white p-4 rounded-3 border shadow-sm fade-in mb-4">
+                    <h5 class="fw-bold text-dark border-bottom pb-2 mb-4"><i class="fas fa-chart-pie text-primary"></i> Overall Status Distribution</h5>
+                    @{
+                        var allTotal = requests.Count;
+                        var allW = requests.Count(r => r.Status == "Waiting");
+                        var allI = requests.Count(r => r.Status == "In Progress");
+                        var allR = requests.Count(r => r.Status == "Resolved");
+                        var allC = requests.Count(r => r.Status == "Closed");
+
+                        var pW = allTotal > 0 ? (allW * 100.0 / allTotal) : 0;
+                        var pI = allTotal > 0 ? (allI * 100.0 / allTotal) : 0;
+                        var pR = allTotal > 0 ? (allR * 100.0 / allTotal) : 0;
+                        var pC = allTotal > 0 ? (allC * 100.0 / allTotal) : 0;
+
+                        var slices = new[] {
+                            new { Name = "Waiting", Count = allW, Percent = pW, Color = "#ffc107" },
+                            new { Name = "In Progress", Count = allI, Percent = pI, Color = "#0dcaf0" },
+                            new { Name = "Resolved", Count = allR, Percent = pR, Color = "#198754" },
+                            new { Name = "Closed", Count = allC, Percent = pC, Color = "#6c757d" }
+                        };
+                    }
+                    <div class="row align-items-center justify-content-center pt-3 pb-4">
+                        <div class="col-md-5 text-center mb-4 mb-md-0">
+                            <div class="d-inline-block" style="width: 180px; height: 180px; position: relative;">
+                                @if (allTotal == 0)
+                                {
+                                    <div style="width: 100%; height: 100%; border-radius: 50%; background: #e9ecef; box-shadow: inset 0 0 10px rgba(0,0,0,0.1);"></div>
+                                }
+                                else
+                                {
+                                    <svg viewBox="0 0 32 32" style="width: 100%; height: 100%; border-radius: 50%; transform: rotate(-90deg); box-shadow: inset 0 0 10px rgba(0,0,0,0.1);">
+                                        @{
+                                            double cumulativePercent = 0;
+                                            foreach (var slice in slices)
+                                            {
+                                                if (slice.Percent > 0)
+                                                {
+                                                    var isFiltered = activeStatusFilter != null && activeStatusFilter != slice.Name;
+                                                    <circle r="15.91549430918954" cx="16" cy="16" fill="none" stroke="@slice.Color" stroke-width="32" stroke-dasharray="@(slice.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture)) 100" stroke-dashoffset="-@(cumulativePercent.ToString(System.Globalization.CultureInfo.InvariantCulture))" 
+                                                            class="pie-slice @(isFiltered ? "filtered-out" : "")" 
+                                                            @onclick="() => ToggleFilter(slice.Name)" 
+                                                            data-bs-toggle="tooltip" data-bs-placement="top" title="@slice.Name: @slice.Count ticket(s) (@slice.Percent.ToString("0.#")%)">
+                                                    </circle>
+                                                    cumulativePercent += slice.Percent;
+                                                }
+                                            }
+                                        }
+                                    </svg>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="p-4 glass-panel rounded-4 shadow-sm w-100">
+                                <h6 class="fw-bold text-secondary mb-3 small text-uppercase">Summary</h6>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Waiting" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Waiting"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #ffc107;"></span>Waiting</span> 
+                                    <span class="fw-bold text-dark">@allW <span class="text-muted small fw-normal">(@pW.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "In Progress" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("In Progress"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #0dcaf0;"></span>In Progress</span> 
+                                    <span class="fw-bold text-dark">@allI <span class="text-muted small fw-normal">(@pI.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Resolved" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Resolved"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #198754;"></span>Resolved</span> 
+                                    <span class="fw-bold text-dark">@allR <span class="text-muted small fw-normal">(@pR.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-3 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Closed" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Closed"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #6c757d;"></span>Closed</span> 
+                                    <span class="fw-bold text-dark">@allC <span class="text-muted small fw-normal">(@pC.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                                    <span class="fw-bold text-dark">Total Tickets</span> 
+                                    <span class="fw-bold text-primary fs-5">@allTotal</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="d-flex justify-content-between align-items-center mb-3">
+                    <h5 class="fw-bold text-dark m-0"><i class="fas fa-list text-primary me-2"></i> Ticket Queue</h5>
+                    <div class="input-group" style="max-width: 300px;">
+                        <span class="input-group-text bg-white border-end-0 text-muted"><i class="fas fa-search"></i></span>
+                        <input type="text" class="form-control border-start-0 ps-0" placeholder="Search tickets..." @bind="searchQuery" @bind:event="oninput">
+                    </div>
+                </div>
+
+                <div class="glass-panel rounded-0 border shadow-sm overflow-hidden fade-in">
+                    <div class="table-responsive custom-scrollbar" style="@(GetFilteredRequests().Count() > 10 ? "max-height: 550px; overflow-y: auto;" : "")">
+                        <table class="table table-sm table-bordered table-hover align-middle mb-0 text-secondary" style="font-size: 0.85rem;">
+                            <thead class="table-light text-dark">
+                                <tr>
+                                    <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 10%" @onclick='() => SortBy("Id")'>Request ID <i class="@GetSortIcon("Id")"></i></th>
+                                    <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 15%" @onclick='() => SortBy("Requester")'>Requester <i class="@GetSortIcon("Requester")"></i></th>
+                                    <th class="fw-bold p-1 text-nowrap" style="width: 25%">Short Description</th>
+                                    <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 15%" @onclick='() => SortBy("TargetDate")'>Target Date <i class="@GetSortIcon("TargetDate")"></i></th>
+                                    <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 15%" @onclick='() => SortBy("PIC")'>PIC <i class="@GetSortIcon("PIC")"></i></th>
+                                    <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 10%" @onclick='() => SortBy("Status")'>Status <i class="@GetSortIcon("Status")"></i></th>
+                                    <th class="fw-bold p-1 text-nowrap" style="width: 10%">Details</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                @if (isInitialLoading)
+                                {
+                                    @for (int i = 0; i < 4; i++)
+                                    {
+                                        <tr>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 60px; height: 16px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 120px; height: 16px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 100%; max-width: 180px; height: 16px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 80px; height: 16px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 100px; height: 24px; border-radius: 12px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 70px; height: 24px; border-radius: 12px;"></div></td>
+                                            <td class="p-2"><div class="skeleton-box" style="width: 30px; height: 30px; border-radius: 4px;"></div></td>
+                                        </tr>
+                                    }
+                                }
+                                else if (!requests.Any())
+                                {
+                                    @EmptyStateTemplate("Antrean Tiket Kosong", "Belum ada tiket yang masuk ke dalam sistem kami.")
+                                }
+                                else
+                                {
+                                    var displayedRequests = GetFilteredRequests().ToList();
+                                    
+                                    if (!displayedRequests.Any())
+                                    {
+                                        @EmptyStateTemplate("Tidak Ada Hasil Pencarian", "Coba gunakan kata kunci lain atau periksa kembali ejaan pencarian Anda.")
+                                    }
+                                    else
+                                    {
+                                        foreach (var req in displayedRequests)
+                                        {
+                                            <tr>
+                                                <td class="p-1 fw-bold text-primary align-middle">@(!string.IsNullOrEmpty(req.QueueNumber) ? req.QueueNumber : req.Id.Substring(0, 8))</td>
+                                                <td class="p-1 align-middle">@req.RequesterName</td>
+                                                <td class="p-1 text-truncate align-middle" style="max-width: 200px;">@req.Description</td>
+                                                <td class="p-1 align-middle">@req.TargetDelivery.ToString("dd/MM/yyyy")</td>
+                                                <td class="p-1 align-middle">
+                                                    @if (!string.IsNullOrEmpty(req.AssignedResource))
+                                                    {
+                                                        <div class="d-flex flex-wrap gap-1">
+                                                            @foreach (var pic in req.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                                            {
+                                                                <span class="badge bg-light text-dark border text-secondary"><i class="fas fa-user-cog"></i> @pic.Trim()</span>
+                                                            }
+                                                        </div>
+                                                    }
+                                                    else
+                                                    {
+                                                        <span class="text-muted fst-italic small">Unassigned</span>
+                                                    }
+                                                </td>
+                                                <td class="p-1 align-middle">
+                                                    <span class="badge @GetStatusBadgeClass(req.Status)">@req.Status</span>
+                                                </td>
+                                                <td class="p-1 align-middle">
+                                                    @if (string.Equals(req.RequesterName, loggedInUserName, StringComparison.OrdinalIgnoreCase))
+                                                    {
+                                                        <button @onclick="() => SetSelectedRequest(req)" class="btn btn-sm py-0 px-1 btn-outline-primary" title="Buka Chat"><i class="fas fa-comments"></i></button>
+                                                    }
+                                                    else
+                                                    {
+                                                        <button class="btn btn-sm py-0 px-1 btn-light text-secondary border disabled" title="Chat terkunci"><i class="fas fa-lock"></i></button>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        }
+                                    }
+                                }
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            }
+        </div>
+    }
+    else if (view == "admin_login")
+    {
+        <div class="container d-flex justify-content-center align-items-center" style="min-height: 70vh;">
+            <div class="glass-panel p-5 rounded-4 shadow" style="max-width: 400px; width: 100%;">
+                <div class="text-center mb-4">
+                    <div class="bg-primary bg-opacity-10 rounded-circle d-inline-flex p-3 mb-3">
+                        <i class="fas fa-lock fs-3 text-primary"></i>
+                    </div>
+                    <h3 class="fw-bold text-dark h4">IT Staff Login</h3>
+                    <p class="text-secondary small">Login to manage your workspace.</p>
+                </div>
+                
+                @if (!string.IsNullOrEmpty(loginError))
+                {
+                    <div class="alert alert-danger py-2 small">@loginError</div>
+                }
+
+                <div class="mb-3">
+                    <label class="form-label text-secondary small fw-medium">Username</label>
+                    <input type="text" class="form-control" @bind="loginUsername" placeholder="Enter username" />
+                </div>
+                <div class="mb-4">
+                    <label class="form-label text-secondary small fw-medium">Password</label>
+                    <input type="password" class="form-control" @bind="loginPassword" placeholder="Enter password" />
+                </div>
+                
+                <button @onclick="HandleLogin" class="btn btn-primary w-100 fw-medium mb-3 soft-shadow-hover btn-interactive">Login to Dashboard</button>
+                <div class="text-center">
+                    <button @onclick='() => view = "public"' class="btn btn-link text-secondary text-decoration-none small">Back to Portal</button>
+                </div>
+            </div>
+        </div>
+    }
+    else if (view == "admin_dashboard" || view == "pic_dashboard")
+    {
+        <div class="d-flex w-100 overflow-hidden" style="height: 100vh;">
+            <!-- Sidebar -->
+            <div class="bg-dark text-white shadow transition-all position-relative" style="width: @(isSidebarOpen ? "250px" : "0px"); overflow: hidden; white-space: nowrap;">
+                <div class="d-flex flex-column" style="width: 250px; height: 100vh; overflow-y: auto;">
+                    <div class="p-3 mb-3 text-center border-bottom border-secondary border-opacity-50">
+                        <h4 class="fw-bold mb-0 text-white"><i class="fas fa-shield-alt text-primary"></i> Helpdesk</h4>
+                        <div class="small text-muted mt-1">@(view == "admin_dashboard" ? "Admin Portal" : "PIC Portal")</div>
+                    </div>
+                    
+                    <div class="px-3">
+                        <div class="d-flex align-items-center mb-4 p-2 bg-secondary bg-opacity-25 rounded-3 dropdown">
+                            <div class="bg-primary text-white rounded-circle d-flex align-items-center justify-content-center me-2" style="width: 35px; height: 35px;">
+                                <i class="fas fa-user"></i>
+                            </div>
+                            <div class="overflow-hidden w-100 cursor-pointer" data-bs-toggle="dropdown" aria-expanded="false">
+                                <div class="fw-bold text-truncate text-white" style="font-size: 0.9rem;" title="@loginUsername">@loginUsername</div>
+                                <div class="small text-info text-truncate d-flex align-items-center justify-content-between" style="font-size: 0.75rem;">
+                                    <span>@(view == "admin_dashboard" ? "Administrator" : "IT Developer")</span>
+                                    @if (loginUsername.Equals("admin", StringComparison.OrdinalIgnoreCase) || loginUsername.Equals("nico.amando", StringComparison.OrdinalIgnoreCase))
+                                    {
+                                        <i class="fas fa-chevron-down ms-1" style="font-size: 0.6rem;"></i>
+                                    }
+                                </div>
+                            </div>
+                            @if (loginUsername.Equals("admin", StringComparison.OrdinalIgnoreCase) || loginUsername.Equals("nico.amando", StringComparison.OrdinalIgnoreCase))
+                            {
+                                <ul class="dropdown-menu dropdown-menu-dark shadow border-0 mt-1" style="font-size: 0.85rem;">
+                                    <li><button class="dropdown-item @(view == "admin_dashboard" ? "active" : "")" @onclick='() => { view = "admin_dashboard"; adminTab = "queue"; activeViewType = "list"; }'><i class="fas fa-user-shield me-2"></i>Administrator</button></li>
+                                    <li><button class="dropdown-item @(view == "pic_dashboard" ? "active" : "")" @onclick='() => { view = "pic_dashboard"; adminTab = "queue"; activeViewType = "list"; }'><i class="fas fa-laptop-code me-2"></i>IT Developer (PIC)</button></li>
+                                </ul>
+                            }
+                        </div>
+
+                        <div class="fw-bold text-uppercase text-secondary small mb-2 ps-2">Main Menu</div>
+                        <ul class="nav nav-pills flex-column mb-auto">
+                            <li class="nav-item mb-1">
+                                <a href="javascript:void(0)" class="nav-link @(adminTab == "queue" && activeViewType == "list" ? "active" : "text-white")" style="@(adminTab != "queue" || activeViewType != "list" ? "opacity: 0.8;" : "")" @onclick='() => { adminTab = "queue"; activeViewType = "list"; successMsg = ""; SetSelectedRequest(null); }'>
+                                    <i class="fas fa-list fa-fw me-2"></i> List View
+                                </a>
+                            </li>
+                            @if (view == "pic_dashboard")
+                            {
+                                <li class="nav-item mb-1">
+                                    <a href="javascript:void(0)" class="nav-link @(adminTab == "queue" && activeViewType == "kanban" ? "active" : "text-white")" style="@(adminTab != "queue" || activeViewType != "kanban" ? "opacity: 0.8;" : "")" @onclick='() => { adminTab = "queue"; activeViewType = "kanban"; successMsg = ""; SetSelectedRequest(null); }'>
+                                        <i class="fas fa-columns fa-fw me-2"></i> Kanban
+                                    </a>
+                                </li>
+                                <li class="nav-item mb-1">
+                                    <a href="javascript:void(0)" class="nav-link @(adminTab == "queue" && activeViewType == "calendar" ? "active" : "text-white")" style="@(adminTab != "queue" || activeViewType != "calendar" ? "opacity: 0.8;" : "")" @onclick='() => { adminTab = "queue"; activeViewType = "calendar"; successMsg = ""; SetSelectedRequest(null); }'>
+                                        <i class="fas fa-calendar-alt fa-fw me-2"></i> Calendar
+                                    </a>
+                                </li>
+                            }
+                            @if (view == "admin_dashboard")
+                            {
+                                <li class="nav-item mb-1 mt-2">
+                                    <a href="javascript:void(0)" class="nav-link @(adminTab == "team" ? "active" : "text-white")" style="@(adminTab != "team" ? "opacity: 0.8;" : "")" @onclick='() => { adminTab = "team"; successMsg = ""; SetSelectedRequest(null); }'>
+                                        <i class="fas fa-users-cog fa-fw me-2"></i> IT Team
+                                    </a>
+                                </li>
+                            }
+                        </ul>
+                    </div>
+
+                    <div class="mt-auto p-3 border-top border-secondary border-opacity-50">
+                        <button @onclick="HandleLogout" class="btn btn-outline-info text-white w-100 d-flex align-items-center justify-content-center gap-2">
+                            <i class="fas fa-home"></i> Public Portal
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Main Content -->
+            <div class="bg-light p-0 d-flex flex-column transition-all" style="flex: 1; height: 100vh; overflow-y: auto; position: relative; min-width: 0;">
+                <div class="p-3 px-4 bg-white border-bottom shadow-sm d-flex justify-content-between align-items-center sticky-top">
+                    <div class="d-flex align-items-center gap-3">
+                        <button class="btn btn-light border shadow-sm rounded-circle d-flex align-items-center justify-content-center" style="width: 38px; height: 38px;" @onclick="() => isSidebarOpen = !isSidebarOpen">
+                            <i class="fas @(isSidebarOpen ? "fa-chevron-left" : "fa-bars") text-secondary"></i>
+                        </button>
+                        <div>
+                            <h3 class="h4 fw-bold text-dark mb-0">
+                                @(adminTab == "team" && view == "admin_dashboard" ? "IT Team Management" : (activeViewType == "kanban" ? "Kanban Board" : activeViewType == "calendar" ? "Calendar View" : "Ticket Queue"))
+                            </h3>
+                            <p class="text-secondary small mb-0">@(view == "admin_dashboard" ? (adminTab == "team" ? "Manage IT resources." : "Manage queue.") : "Manage tickets assigned to you.")</p>
+                        </div>
+                    </div>
+                </div>
+
+                    <div class="p-4 flex-grow-1">
+                        @if (!string.IsNullOrEmpty(successMsg) && (view == "admin_dashboard" || view == "pic_dashboard"))
+                        {
+                            <div class="alert alert-success d-flex align-items-center gap-3 fade-in shadow-sm rounded-3 border-success-subtle mb-4">
+                                <i class="fas fa-check-circle fs-5 text-success"></i>
+                                <span class="fw-medium">@successMsg</span>
+                            </div>
+                        }
+
+                        @if (adminTab == "queue" || view == "pic_dashboard")
+                        {
+                            var baseReqs = requests.AsEnumerable();
+                            if (view == "pic_dashboard" && !string.IsNullOrEmpty(loginUsername))
+                            {
+                                baseReqs = baseReqs.Where(r => r.AssignedResource != null && r.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(p => string.Equals(p.Trim(), loginUsername, StringComparison.OrdinalIgnoreCase)));
+                            }
+                            int totalCount = baseReqs.Count();
+                            int waitingCount = baseReqs.Count(r => r.Status == "Waiting");
+                            int inProgressCount = baseReqs.Count(r => r.Status == "In Progress");
+                            int urgentCount = baseReqs.Count(r => r.Priority == "High");
+                            
+                            <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-3">
+                                <div class="d-flex flex-wrap gap-2 align-items-center">
+                        <button class="btn btn-sm rounded-pill @(activeStatusFilter == null ? "btn-primary shadow-sm" : "btn-light border text-secondary")" @onclick="() => activeStatusFilter = null">
+                            <i class="fas fa-list"></i> All Tasks <span class="badge bg-white text-dark ms-1 border shadow-sm">@totalCount</span>
+                        </button>
+                        <button class="btn btn-sm rounded-pill @(activeStatusFilter == "Waiting" ? "btn-warning text-dark shadow-sm" : "btn-light border text-secondary")" @onclick='() => activeStatusFilter = "Waiting"'>
+                            <i class="fas fa-hourglass-half"></i> Waiting <span class="badge bg-white text-dark ms-1 border shadow-sm">@waitingCount</span>
+                        </button>
+                        <button class="btn btn-sm rounded-pill @(activeStatusFilter == "In Progress" ? "btn-info text-white shadow-sm" : "btn-light border text-secondary")" @onclick='() => activeStatusFilter = "In Progress"'>
+                            <i class="fas fa-spinner"></i> In Progress <span class="badge bg-white text-dark ms-1 border shadow-sm">@inProgressCount</span>
+                        </button>
+                        <button class="btn btn-sm rounded-pill @(activeStatusFilter == "Urgent" ? "btn-danger shadow-sm" : "btn-light border text-secondary")" @onclick='() => activeStatusFilter = "Urgent"'>
+                            <i class="fas fa-exclamation-circle"></i> Urgent (High) <span class="badge bg-white text-dark ms-1 border shadow-sm">@urgentCount</span>
+                        </button>
+                    </div>
+
+                    <div class="input-group input-group-sm" style="max-width: 250px;">
+                        <span class="input-group-text bg-white border-end-0 text-muted"><i class="fas fa-search"></i></span>
+                        <input type="text" class="form-control border-start-0 ps-0" placeholder="Search tickets..." @bind="searchQuery" @bind:event="oninput">
+                    </div>
+                </div>
+
+                @if (activeViewType == "calendar" && view == "pic_dashboard")
+                {
+                    <div class="glass-panel rounded-0 border shadow-sm p-4 fade-in bg-white">
+                        <div class="d-flex justify-content-between align-items-center mb-4">
+                            <h4 class="fw-bold text-dark m-0"><i class="fas fa-calendar-alt text-primary me-2"></i>@currentMonth.ToString("MMMM yyyy")</h4>
+                            <div>
+                                <button class="btn btn-sm btn-outline-secondary rounded-circle" @onclick="() => currentMonth = currentMonth.AddMonths(-1)"><i class="fas fa-chevron-left"></i></button>
+                                <button class="btn btn-sm btn-outline-secondary rounded-circle ms-1" @onclick="() => currentMonth = currentMonth.AddMonths(1)"><i class="fas fa-chevron-right"></i></button>
+                            </div>
+                        </div>
+                        
+                        <div class="border-top">
+                            <div class="row g-0 border-start">
+                                @foreach (var dayName in new[] { "Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun" })
+                                {
+                                    <div class="col border-end border-bottom bg-light p-2 text-center">
+                                        <span class="small fw-bold text-secondary">@dayName</span>
+                                    </div>
+                                }
+                            </div>
+                            
+                            @{
+                                var firstDayOfMonth = new DateTime(currentMonth.Year, currentMonth.Month, 1);
+                                var daysInMonth = DateTime.DaysInMonth(currentMonth.Year, currentMonth.Month);
+                                int startDayOfWeek = (int)firstDayOfMonth.DayOfWeek;
+                                if (startDayOfWeek == 0) startDayOfWeek = 7;
+                                
+                                int dayCounter = 1;
+                            }
+                            
+                            @for (int row = 0; row < 6; row++)
+                            {
+                                <div class="row g-0 border-start">
+                                    @for (int col = 0; col < 7; col++)
+                                    {
+                                        int cellIndex = row * 7 + col + 1;
+                                        <div class="col border-end border-bottom p-2" style="min-height: 100px; @(cellIndex < startDayOfWeek || dayCounter > daysInMonth ? "background-color: #f8f9fa;" : "background-color: #fff;")">
+                                            @if (cellIndex >= startDayOfWeek && dayCounter <= daysInMonth)
+                                            {
+                                                var currentDate = new DateTime(currentMonth.Year, currentMonth.Month, dayCounter);
+                                                <div class="d-flex justify-content-between align-items-start mb-1">
+                                                    <span class="fw-bold @(currentDate == DateTime.Today ? "text-white bg-primary rounded-circle d-inline-block text-center" : "text-dark")" style="@(currentDate == DateTime.Today ? "width: 24px; height: 24px; line-height: 24px;" : "")">@dayCounter</span>
+                                                </div>
+                                                
+                                                var ticketsToday = GetFilteredRequests().Where(r => r.CreatedAt.Date == currentDate).ToList();
+                                                foreach(var t in ticketsToday)
+                                                {
+                                                    <div class="border rounded-2 p-1 mb-1 small cursor-pointer shadow-sm @(t.Priority == "High" ? "border-danger bg-danger bg-opacity-10" : t.Priority == "Medium" ? "border-warning bg-warning bg-opacity-10" : "border-primary bg-primary bg-opacity-10")" @onclick="() => SetSelectedRequest(t)" title="@t.RequesterName">
+                                                        <div class="fw-bold text-truncate" style="font-size: 0.7rem;">@(!string.IsNullOrEmpty(t.QueueNumber) ? t.QueueNumber : t.Id.Substring(0, 8))</div>
+                                                        <div class="text-truncate text-secondary" style="font-size: 0.7rem;">@t.RequesterName</div>
+                                                        <div class="text-truncate mt-1" style="font-size: 0.65rem; color: #555;">
+                                                            <i class="fas fa-calendar-check me-1"></i>Target: <strong>@t.TargetDelivery.ToString("dd MMM")</strong>
+                                                        </div>
+                                                    </div>
+                                                }
+                                                
+                                                dayCounter++;
+                                            }
+                                        </div>
+                                    }
+                                </div>
+                            }
+                        </div>
+                    </div>
+                }
+                else if (activeViewType == "kanban" && view == "pic_dashboard")
+                {
+                    <div class="d-flex justify-content-between align-items-center mb-3">
+                        <div class="d-flex align-items-center gap-2 fade-in">
+                            <span class="text-secondary fw-medium small">Group by:</span>
+                            <select class="form-select form-select-sm" style="width: 150px;" @bind="swimlaneGroupBy">
+                                <option value="None">None</option>
+                                <option value="Priority">Priority</option>
+                            </select>
+                        </div>
+                        <div class="d-flex align-items-center gap-2 fade-in">
+                            <span class="text-secondary fw-medium small">WIP Limit:</span>
+                            <input type="number" class="form-control form-control-sm" style="width: 70px;" min="0" @bind="wipLimitInProgress" />
+                        </div>
+                    </div>
+                    
+                    var swimlanes = new List<string> { "Default" };
+                    if (swimlaneGroupBy == "Priority")
+                    {
+                        swimlanes = new List<string> { "High", "Medium", "Low" };
+                    }
+
+                    <div class="kanban-board-container overflow-x-auto pb-3 custom-scrollbar" style="min-height: 550px;">
+                        @foreach (var swimlane in swimlanes)
+                        {
+                            @if (swimlaneGroupBy != "None")
+                            {
+                                <div class="w-100 bg-white border rounded-3 p-2 fw-bold text-secondary mb-3 d-flex align-items-center gap-2 shadow-sm fade-in">
+                                    @if(swimlane == "High") { <span class="badge bg-danger">High Priority</span> }
+                                    else if(swimlane == "Medium") { <span class="badge bg-warning text-dark">Medium Priority</span> }
+                                    else { <span class="badge bg-primary">Low Priority</span> }
+                                </div>
+                            }
+
+                            <div class="d-flex flex-nowrap gap-3 mb-4" style="min-width: 100%;">
+                                @foreach (var statusCol in new[] { "Waiting", "In Progress", "Resolved", "Closed" })
+                                {
+                                    var isCollapsed = collapsedColumns.Contains(statusCol);
+                                    var colTickets = GetFilteredRequests().Where(r => r.Status == statusCol);
+                                    if (swimlaneGroupBy == "Priority")
+                                    {
+                                        colTickets = colTickets.Where(r => r.Priority == swimlane);
+                                    }
+                                    var ticketCount = colTickets.Count();
+                                    var isOverLimit = statusCol == "In Progress" && ticketCount > wipLimitInProgress && wipLimitInProgress > 0;
+                                    var isDragTarget = dragTargetStatus == statusCol;
+
+                                    <div class="flex-shrink-0 transition-all kanban-column" style="width: @(isCollapsed ? "60px" : "320px");">
+                                        <div class="glass-panel p-2 rounded-4 shadow-sm h-100 d-flex flex-column @(isDragTarget ? "bg-primary bg-opacity-10" : "bg-light")" 
+                                             style="border: 2px dashed @(isDragTarget ? "#0d6efd" : "transparent");"
+                                             ondragover="event.preventDefault();" 
+                                             @ondragenter='() => HandleDragEnter(statusCol)'
+                                             @ondragleave='HandleDragLeave'
+                                             @ondrop='() => HandleDrop(statusCol)'>
+                                            
+                                            @if (isCollapsed)
+                                            {
+                                                <div class="text-center h-100 d-flex flex-column align-items-center py-3 cursor-pointer hover-bg-light rounded-3 fade-in" @onclick="() => ToggleColumn(statusCol)">
+                                                    <i class="fas fa-expand-alt text-secondary mb-3"></i>
+                                                    <div class="fw-bold text-secondary text-uppercase" style="writing-mode: vertical-rl; transform: rotate(180deg); letter-spacing: 2px;">
+                                                        @statusCol
+                                                    </div>
+                                                    <div class="mt-auto badge bg-secondary rounded-circle p-2">@ticketCount</div>
+                                                </div>
+                                            }
+                                            else
+                                            {
+                                                <div class="d-flex justify-content-between align-items-center border-bottom pb-2 mb-3 fade-in">
+                                                    <h6 class="fw-bold m-0 d-flex align-items-center gap-2 @(isOverLimit ? "text-danger" : "text-dark")">
+                                                        @if (statusCol == "Waiting") { <i class="fas fa-hourglass-half text-warning"></i> }
+                                                        else if (statusCol == "In Progress") { <i class="fas fa-spinner text-info"></i> }
+                                                        else if (statusCol == "Resolved") { <i class="fas fa-check-circle text-success"></i> }
+                                                        else { <i class="fas fa-archive text-secondary"></i> }
+                                                        
+                                                        @statusCol
+                                                        
+                                                        @if (isOverLimit)
+                                                        {
+                                                            <i class="fas fa-exclamation-triangle text-danger" title="WIP Limit Exceeded"></i>
+                                                        }
+                                                    </h6>
+                                                    <div class="d-flex align-items-center gap-2">
+                                                        <span class="badge @(isOverLimit ? "bg-danger" : "bg-white text-dark border") shadow-sm">@ticketCount</span>
+                                                        <button class="btn btn-sm btn-light py-0 px-1 text-secondary border-0" @onclick="() => ToggleColumn(statusCol)" title="Collapse Column"><i class="fas fa-compress-alt"></i></button>
+                                                    </div>
+                                                </div>
+                                                
+                                                <div class="d-flex flex-column gap-2 flex-grow-1 custom-scrollbar fade-in" style="min-height: 100px;">
+                                                    @foreach(var t in colTickets)
+                                                    {
+                                                        var isOverdue = t.TargetDelivery.Date < DateTime.Today;
+                                                        var isDueToday = t.TargetDelivery.Date == DateTime.Today;
+                                                        var followUpCount = t.FollowUpNotes?.Count ?? 0;
+                                                        
+                                                        <div class="card kanban-card border-0 shadow-sm cursor-pointer position-relative bg-white @(selectedTicketIds.Contains(t.Id) ? "border border-primary shadow bg-primary bg-opacity-10" : "")" 
+                                                             style="border-left: 4px solid @(t.Priority == "High" ? "#dc3545" : t.Priority == "Medium" ? "#ffc107" : "#0d6efd") !important;"
+                                                             draggable="true" 
+                                                             @ondragstart="() => HandleDragStart(t)"
+                                                             @onclick="() => SetSelectedRequest(t)">
+                                                            
+                                                            <div class="position-absolute" style="top: -8px; left: -8px; z-index: 15;">
+                                                                <input type="checkbox" class="form-check-input border-secondary shadow-sm" style="width: 1.2rem; height: 1.2rem; cursor: pointer;"
+                                                                       checked="@selectedTicketIds.Contains(t.Id)"
+                                                                       @onchange="@(e => ToggleSelection(t.Id))"
+                                                                       @onclick:stopPropagation="true" />
+                                                            </div>
+                                                            
+                                                            <!-- Hover Actions -->
+                                                            <div class="kanban-hover-actions position-absolute top-0 end-0 p-1 d-none bg-white bg-opacity-75 rounded-start shadow-sm" style="z-index: 10;">
+                                                                <button class="btn btn-sm btn-light py-0 px-1 text-primary me-1" @onclick:stopPropagation="true" @onclick="() => SetSelectedRequest(t)" title="Quick Chat"><i class="fas fa-comment-dots"></i></button>
+                                                                <div class="dropdown d-inline-block" @onclick:stopPropagation="true">
+                                                                    <button class="btn btn-sm btn-light py-0 px-1 text-secondary" data-bs-toggle="dropdown"><i class="fas fa-ellipsis-v"></i></button>
+                                                                    <ul class="dropdown-menu shadow-sm" style="font-size: 0.8rem;">
+                                                                        <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => { t.Status = "In Progress"; DbContext.SaveChanges(); }'>Move to In Progress</a></li>
+                                                                        <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => { t.Status = "Resolved"; DbContext.SaveChanges(); }'>Mark as Resolved</a></li>
+                                                                    </ul>
+                                                                </div>
+                                                            </div>
+
+                                                            <div class="card-body p-2 px-3">
+                                                                <div class="d-flex justify-content-between align-items-start mb-1">
+                                                                    <div class="fw-bold text-dark text-truncate" style="font-size: 0.85rem; max-width: 80%;" title="@t.RequesterName">@t.RequesterName</div>
+                                                                    <span class="text-secondary fw-bold" style="font-size: 0.7rem;">@(!string.IsNullOrEmpty(t.QueueNumber) ? t.QueueNumber : t.Id.Substring(0, 8))</span>
+                                                                </div>
+                                                                <div class="text-secondary text-truncate mb-2" style="font-size: 0.75rem;" title="@t.Description">@t.Description</div>
+                                                                
+                                                                @if (!string.IsNullOrEmpty(t.Tags))
+                                                                {
+                                                                    <div class="mb-2 d-flex flex-wrap gap-1">
+                                                                        @foreach (var tag in t.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                                                        {
+                                                                            <span class="badge rounded-pill fw-medium" style="background-color: rgba(91, 134, 229, 0.1); color: #5B86E5; font-size: 0.65rem;">@tag.Trim()</span>
+                                                                        }
+                                                                    </div>
+                                                                }
+                                                                
+                                                                <div class="d-flex justify-content-between align-items-center mt-2 pt-2 border-top">
+                                                                    <div class="d-flex align-items-center gap-2">
+                                                                        <div class="small fw-medium px-2 py-1 rounded-2 @(isOverdue && statusCol != "Resolved" && statusCol != "Closed" ? "bg-danger bg-opacity-10 text-danger" : isDueToday && statusCol != "Resolved" && statusCol != "Closed" ? "bg-warning bg-opacity-10 text-dark" : "bg-light text-secondary")" style="font-size: 0.7rem;">
+                                                                            <i class="fas fa-calendar-alt"></i> @(isOverdue && statusCol != "Resolved" && statusCol != "Closed" ? "Overdue" : isDueToday && statusCol != "Resolved" && statusCol != "Closed" ? "Today" : t.TargetDelivery.ToString("dd MMM"))
+                                                                        </div>
+                                                                        @if(followUpCount > 0)
+                                                                        {
+                                                                            <div class="small text-secondary" style="font-size: 0.7rem;" title="@followUpCount Follow-up Notes">
+                                                                                <i class="fas fa-tasks"></i> @followUpCount
+                                                                            </div>
+                                                                        }
+                                                                    </div>
+                                                                    @if (!string.IsNullOrEmpty(t.AttachmentUrl))
+                                                                    {
+                                                                        <i class="fas fa-paperclip text-info small"></i>
+                                                                    }
+                                                                </div>
+                                                            </div>
+                                                        </div>
+                                                    }
+                                                </div>
+                                            }
+                                        </div>
+                                    </div>
+                                }
+                            </div>
+                        }
+                    </div>
+                    
+                    @if (selectedTicketIds.Any())
+                    {
+                        <div class="position-fixed bottom-0 start-50 translate-middle-x mb-4 shadow-lg rounded-pill bg-dark text-white p-2 px-4 d-flex align-items-center gap-3 fade-in" style="z-index: 1050; border: 1px solid rgba(255,255,255,0.2);">
+                            <div class="fw-bold"><span class="badge bg-primary rounded-pill me-2">@selectedTicketIds.Count</span> Selected</div>
+                            <div class="vr bg-white opacity-25" style="height: 20px;"></div>
+                            
+                            <div class="dropdown dropup">
+                                <button class="btn btn-sm btn-dark text-white fw-medium dropdown-toggle border-0" data-bs-toggle="dropdown">
+                                    <i class="fas fa-tasks me-1"></i> Status
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-dark shadow mb-2">
+                                    <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangeStatus("Waiting")'>Waiting</a></li>
+                                    <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangeStatus("In Progress")'>In Progress</a></li>
+                                    <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangeStatus("Resolved")'>Resolved</a></li>
+                                    <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangeStatus("Closed")'>Closed</a></li>
+                                </ul>
+                            </div>
+                            
+                            <div class="dropdown dropup">
+                                <button class="btn btn-sm btn-dark text-white fw-medium dropdown-toggle border-0" data-bs-toggle="dropdown">
+                                    <i class="fas fa-flag me-1"></i> Priority
+                                </button>
+                                <ul class="dropdown-menu dropdown-menu-dark shadow mb-2">
+                                    <li><a class="dropdown-item text-danger" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("High")'>High</a></li>
+                                    <li><a class="dropdown-item text-warning" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("Medium")'>Medium</a></li>
+                                    <li><a class="dropdown-item text-primary" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("Low")'>Low</a></li>
+                                </ul>
+                            </div>
+                            
+                            @if (view == "admin_dashboard")
+                            {
+                                <button class="btn btn-sm btn-danger rounded-pill px-3 fw-medium ms-1" @onclick="HandleBulkDelete"><i class="fas fa-trash-alt me-1"></i> Delete</button>
+                            }
+                            
+                            <button class="btn btn-sm btn-close btn-close-white ms-2" aria-label="Close" @onclick="ClearSelection"></button>
+                        </div>
+                    }
+                }
+                else
+                {
+                    <div class="glass-panel rounded-0 border shadow-sm overflow-hidden fade-in">
+                        <div class="table-responsive custom-scrollbar" style="@(GetFilteredRequests().Count() > 10 ? "max-height: 550px; overflow-y: auto;" : "")">
+                                    <table class="table table-hover table-bordered align-middle mb-0 text-secondary text-sm">
+                                        <thead class="table-light text-dark">
+                                            <tr>
+                                                <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Id")'>ID Request <i class="@GetSortIcon("Id")"></i></th>
+                                                @if (view == "admin_dashboard")
+                                                {
+                                                    <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Requester")'>Requester <i class="@GetSortIcon("Requester")"></i></th>
+                                                }
+                                                @if (view == "admin_dashboard")
+                                                {
+                                                    <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Priority")'>Priority <i class="@GetSortIcon("Priority")"></i></th>
+                                                }
+                                                <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("TargetDate")'>Target Date <i class="@GetSortIcon("TargetDate")"></i></th>
+                                                <th class="fw-bold p-2 text-nowrap">Links/Attach</th>
+                                                <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("PIC")'>PIC <i class="@GetSortIcon("PIC")"></i></th>
+                                                <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Status")'>Status <i class="@GetSortIcon("Status")"></i></th>
+                                                <th class="fw-bold p-2 text-nowrap">Actions</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            @if (isInitialLoading)
+                                            {
+                                                @for (int i = 0; i < 4; i++)
+                                                {
+                                                    <tr>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 60px; height: 16px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 120px; height: 16px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 80px; height: 16px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 30px; height: 30px; border-radius: 4px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 100px; height: 30px; border-radius: 4px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 100px; height: 30px; border-radius: 4px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 70px; height: 30px; border-radius: 4px;"></div></td>
+                                                    </tr>
+                                                }
+                                            }
+                                            else
+                                            {
+                                                var displayedRequests = GetFilteredRequests().ToList();
+                                                if (!displayedRequests.Any())
+                                                {
+                                                    @EmptyStateTemplate("Tidak Ada Hasil Pencarian", "Coba gunakan kata kunci lain atau periksa kembali ejaan pencarian Anda.")
+                                                }
+                                                else
+                                                {
+                                                    foreach (var req in displayedRequests)
+                                                    {
+                                                        <tr>
+                                                            <td class="p-1 fw-bold align-middle @(req.Priority == "High" ? "text-danger" : req.Priority == "Medium" ? "text-warning" : "text-success")" title="Priority: @req.Priority">
+                                                                @(!string.IsNullOrEmpty(req.QueueNumber) ? req.QueueNumber : req.Id.Substring(0, 8))
+                                                                @if(req.HasUnreadUserMessage)
+                                                                {
+                                                                    <span class="badge bg-danger ms-1 rounded-pill"><i class="fas fa-bell"></i> New</span>
+                                                                }
+                                                            </td>
+                                                            @if (view == "admin_dashboard")
+                                                            {
+                                                                <td class="p-1 align-middle">
+                                                                    <div class="text-dark">@req.RequesterName</div>
+                                                                    @if (!string.IsNullOrEmpty(req.Tags))
+                                                                    {
+                                                                        <div class="d-flex flex-wrap gap-1 mt-1">
+                                                                            @foreach (var tag in req.Tags.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                                                            {
+                                                                                <span class="badge bg-secondary bg-opacity-50 text-dark fw-normal" style="font-size: 0.65rem;">#@tag.Trim()</span>
+                                                                            }
+                                                                        </div>
+                                                                    }
+                                                                </td>
+                                                            }
+                                                            @if (view == "admin_dashboard")
+                                                            {
+                                                                <td class="p-1 align-middle">
+                                                                    <select class="form-select form-select-sm py-0" value="@req.Priority" @onchange="@(e => { req.Priority = e.Value?.ToString() ?? "Low"; DbContext.SaveChanges(); })">
+                                                                        <option value="Low">🟢 Low</option>
+                                                                        <option value="Medium">🟡 Medium</option>
+                                                                        <option value="High">🔴 High</option>
+                                                                    </select>
+                                                                </td>
+                                                            }
+                                                            <td class="p-1 align-middle">@req.TargetDelivery.ToString("dd/MM/yyyy")</td>
+                                                            <td class="p-1 align-middle text-center text-nowrap">
+                                                                @if (!string.IsNullOrEmpty(req.AttachmentUrl))
+                                                                {
+                                                                    <button @onclick="() => previewImageUrl = req.AttachmentUrl" class="btn btn-sm py-0 px-1 btn-outline-info me-1" title="View Attachment"><i class="fas fa-file-image"></i></button>
+                                                                }
+                                                                @if (!string.IsNullOrEmpty(req.ProblemUrl))
+                                                                {
+                                                                    <a href="@req.ProblemUrl" target="_blank" class="btn btn-sm py-0 px-1 btn-outline-primary" title="Go to URL"><i class="fas fa-link"></i></a>
+                                                                }
+                                                                @if (string.IsNullOrEmpty(req.AttachmentUrl) && string.IsNullOrEmpty(req.ProblemUrl))
+                                                                {
+                                                                    <span class="text-muted small">-</span>
+                                                                }
+                                                            </td>
+                                                            <td class="p-1 align-middle">
+                                                                @if (view == "admin_dashboard")
+                                                                {
+                                                                    <div class="dropdown" @onclick:stopPropagation="true">
+                                                                        <button class="btn btn-sm btn-outline-secondary dropdown-toggle py-0 w-100 text-start" type="button" data-bs-toggle="dropdown" aria-expanded="false" style="font-size: 0.75rem;">
+                                                                            @if(string.IsNullOrEmpty(req.AssignedResource)) { <span class="text-muted">Unassigned</span> } else { <span>@(req.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries).Length) PIC(s)</span> }
+                                                                        </button>
+                                                                        <ul class="dropdown-menu shadow-sm" style="font-size: 0.8rem; min-width: 180px;">
+                                                                            @foreach(var t in teamMembers)
+                                                                            {
+                                                                                var isAssigned = !string.IsNullOrEmpty(req.AssignedResource) && req.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(x => x.Trim()).Contains(t.Name, StringComparer.OrdinalIgnoreCase);
+                                                                                <li>
+                                                                                    <button class="dropdown-item d-flex align-items-center gap-2" @onclick="@(() => ToggleAssign(req, t.Name))" type="button">
+                                                                                        <i class="fas @(isAssigned ? "fa-check-square text-primary" : "fa-square text-muted opacity-50")"></i> @t.Name
+                                                                                    </button>
+                                                                                </li>
+                                                                            }
+                                                                        </ul>
+                                                                    </div>
+                                                                }
+                                                                else
+                                                                {
+                                                                    @if (!string.IsNullOrEmpty(req.AssignedResource))
+                                                                    {
+                                                                        <div class="d-flex flex-column gap-1">
+                                                                            @foreach(var pic in req.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries))
+                                                                            {
+                                                                                <span class="badge bg-light text-dark border w-100 text-start">@pic.Trim()</span>
+                                                                            }
+                                                                        </div>
+                                                                    }
+                                                                }
+                                                            </td>
+                                                            <td class="p-1 align-middle">
+                                                                <select class="form-select form-select-sm py-0" value="@req.Status" @onchange="@(e => { req.Status = e.Value?.ToString(); DbContext.SaveChanges(); })">
+                                                                    <option value="Waiting">Waiting</option>
+                                                                    <option value="In Progress">In Progress</option>
+                                                                    <option value="Resolved">Resolved</option>
+                                                                    <option value="Closed">Closed</option>
+                                                                </select>
+                                                            </td>
+                                                            <td class="p-1 align-middle text-nowrap">
+                                                                @if (view == "admin_dashboard" && (req.Status == "Resolved" || req.Status == "Closed"))
+                                                                {
+                                                                    <button @onclick="() => HandleDeleteRequest(req)" class="btn btn-sm py-0 px-1 btn-outline-danger me-1"><i class="fas fa-trash"></i></button>
+                                                                }
+                                                                <button @onclick="() => SetSelectedRequest(req)" class="btn btn-sm py-0 px-1 btn-outline-primary"><i class="fas fa-comments"></i> Chat</button>
+                                                            </td>
+                                                        </tr>
+                                                    }
+                                                }
+                                            }
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                }
+            }
+            else if (adminTab == "team" && view == "admin_dashboard")
+            {
+                <div class="row fade-in">
+                    <div class="col-md-4 mb-4">
+                        <div class="glass-panel p-4 rounded-4 shadow-sm">
+                            <h5 class="fw-bold text-dark border-bottom pb-2 mb-3"><i class="fas fa-user-plus text-primary"></i> Add PIC</h5>
+                            <EditForm Model="newTeamMember" OnValidSubmit="HandleTeamSubmit">
+                                <DataAnnotationsValidator />
+                                <div class="mb-3">
+                                    <label class="form-label small fw-medium text-secondary">Username</label>
+                                    <InputText @bind-Value="newTeamMember.Name" class="form-control form-control-sm" required />
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label small fw-medium text-secondary">Role / Specialization</label>
+                                    <InputSelect @bind-Value="newTeamMember.Role" class="form-select form-select-sm" required>
+                                        <option value="">-- Select Role --</option>
+                                        <option value="Frontend Web Developer">Frontend Web Developer</option>
+                                        <option value="Backend Web Developer">Backend Web Developer</option>
+                                        <option value="Fullstack Developer">Fullstack Developer</option>
+                                        <option value="Android Developer">Android Developer</option>
+                                        <option value="iOS Developer">iOS Developer</option>
+                                        <option value="UI/UX Designer">UI/UX Designer</option>
+                                        <option value="QA Engineer">QA Engineer</option>
+                                    </InputSelect>
+                                </div>
+                                <button type="submit" class="btn btn-primary btn-sm w-100 soft-shadow-hover btn-interactive">Save Personnel</button>
+                            </EditForm>
+                        </div>
+                    </div>
+                    <div class="col-md-8">
+                        <div class="glass-panel rounded-0 border shadow-sm overflow-hidden">
+                            <div class="table-responsive">
+                                <table class="table table-hover table-bordered align-middle mb-0 text-secondary text-sm">
+                                    <thead class="table-light text-dark">
+                                        <tr>
+                                            <th class="fw-medium p-3 text-nowrap">Username</th>
+                                            <th class="fw-medium p-3 text-nowrap">Role</th>
+                                            <th class="fw-medium p-3 text-nowrap w-auto">Actions</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        @foreach (var tm in teamMembers)
+                                        {
+                                            <tr>
+                                                <td class="p-3 fw-bold text-dark">@tm.Name</td>
+                                                <td class="p-3">@tm.Role</td>
+                                                <td class="p-3">
+                                                    <button @onclick="() => HandleDeleteTeamMember(tm)" class="btn btn-sm btn-outline-danger"><i class="fas fa-trash"></i></button>
+                                                </td>
+                                            </tr>
+                                        }
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            }
+
+                    </div>
+                </div>
+            </div>
+    }
+</div>
+
+@code {
+    private bool isSidebarOpen = true;
+    private string CurrentUserName => (view == "admin_dashboard" || view == "pic_dashboard") ? (string.IsNullOrEmpty(loginUsername) ? "Staff" : loginUsername) : (string.IsNullOrEmpty(loggedInUserName) ? "User" : loggedInUserName);
+
+    public void Dispose()
+    {
+        PresenceService.OnTicketPresenceChanged -= HandlePresenceChanged;
+        PresenceService.OnNewTicketCreated -= HandleNewTicketCreated;
+        if (selectedRequest != null)
+        {
+            PresenceService.LeaveTicket(selectedRequest.Id, CurrentUserName);
+        }
+    }
+
+    private async void HandlePresenceChanged(string ticketId)
+    {
+        await InvokeAsync(StateHasChanged);
+    }
+
+    private async void HandleNewTicketCreated()
+    {
+        await InvokeAsync(async () => {
+            LoadRequests();
+            if (view == "admin_dashboard" || view == "pic_dashboard")
+            {
+                try 
+                {
+                    await JS.InvokeVoidAsync("eval", @"
+                        (function() {
+                            try {
+                                var context = new (window.AudioContext || window.webkitAudioContext)();
+                                var osc = context.createOscillator();
+                                var gain = context.createGain();
+                                osc.connect(gain);
+                                gain.connect(context.destination);
+                                osc.type = 'sine';
+                                osc.frequency.setValueAtTime(880, context.currentTime);
+                                osc.frequency.exponentialRampToValueAtTime(440, context.currentTime + 0.1);
+                                gain.gain.setValueAtTime(0.5, context.currentTime);
+                                gain.gain.exponentialRampToValueAtTime(0.01, context.currentTime + 0.5);
+                                osc.start(context.currentTime);
+                                osc.stop(context.currentTime + 0.5);
+                            } catch(e) {}
+                        })();
+                    ");
+                }
+                catch { /* Ignore */ }
+            }
+            StateHasChanged();
+        });
+    }
+
+    private void SetSelectedRequest(TicketRequest? req)
+    {
+        // leave current presence
+        var currentName = CurrentUserName;
+        if (selectedRequest != null)
+        {
+            PresenceService.LeaveTicket(selectedRequest.Id, currentName);
+        }
+
+        selectedRequest = req;
+        
+        // join new presence
+        if (req != null)
+        {
+            PresenceService.JoinTicket(req.Id, currentName);
+            if ((view == "admin_dashboard" || view == "pic_dashboard") && req.HasUnreadUserMessage)
+            {
+                req.HasUnreadUserMessage = false;
+                DbContext.TicketRequests.Update(req);
+                DbContext.SaveChanges();
+            }
+        }
+    }
+
+    private RenderFragment EmptyStateTemplate(string title, string message) => 
+        @<tr>
+            <td colspan="100" class="p-5 text-center">
+                <div class="empty-state fade-in py-5">
+                    <div class="empty-state-icon mb-4">
+                        <svg width="100" height="100" viewBox="0 0 24 24" fill="none" stroke="url(#emptyGradient)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" class="opacity-75">
+                            <defs>
+                                <linearGradient id="emptyGradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                                    <stop offset="0%" stop-color="#8ec5fc" />
+                                    <stop offset="100%" stop-color="#e0c3fc" />
+                                </linearGradient>
+                            </defs>
+                            <polyline points="22 12 16 12 14 15 10 15 8 12 2 12"></polyline>
+                            <path d="M5.45 5.11L2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"></path>
+                        </svg>
+                    </div>
+                    <h5 class="fw-bold mb-2" style="background: linear-gradient(90deg, #5B86E5, #36D1DC); -webkit-background-clip: text; -webkit-text-fill-color: transparent;">@title</h5>
+                    <p class="text-muted small mb-0">@message</p>
+                </div>
+            </td>
+        </tr>;
+
+    private string view = "public";
+    private string loggedInUserName = "";
+    private string activeTab = "queue";
+    private string successMsg = "";
+    private string formErrorMsg = "";
+    private string loginError = "";
+    private string loginUsername = "";
+    private string loginPassword = "";
+
+    private string adminTab = "queue";
+    private TicketRequest formData = new TicketRequest { TargetDelivery = DateTime.Today.AddDays(1) };
+    private List<TicketRequest> requests = new();
+    private List<TeamMember> teamMembers = new();
+    private TeamMember newTeamMember = new TeamMember();
+    private Microsoft.AspNetCore.Components.Forms.IBrowserFile? uploadedFile;
+    private TicketRequest? selectedRequest = null;
+    private string newNote = "";
+    private string? previewImageUrl = null;
+    private bool isInitialLoading = true;
+    private bool isSubmitting = false;
+    private string searchQuery = "";
+    private string? activeStatusFilter = null;
+    private string activeViewType = "list";
+    private DateTime currentMonth = DateTime.Today;
+    private TicketRequest? draggedRequest;
+    private string dragTargetStatus = "";
+    private HashSet<string> collapsedColumns = new();
+    private string swimlaneGroupBy = "None";
+    private int wipLimitInProgress = 5;
+
+    // Bulk Actions state
+    private HashSet<string> selectedTicketIds = new();
+    
+    private void ToggleSelection(string id)
+    {
+        if (selectedTicketIds.Contains(id)) selectedTicketIds.Remove(id);
+        else selectedTicketIds.Add(id);
+    }
+    
+    private void ClearSelection() => selectedTicketIds.Clear();
+    
+    private void HandleBulkChangeStatus(string newStatus)
+    {
+        var toUpdate = DbContext.TicketRequests.Where(t => selectedTicketIds.Contains(t.Id)).ToList();
+        foreach (var t in toUpdate) t.Status = newStatus;
+        DbContext.SaveChanges();
+        ClearSelection();
+    }
+
+    private void HandleBulkChangePriority(string newPriority)
+    {
+        var toUpdate = DbContext.TicketRequests.Where(t => selectedTicketIds.Contains(t.Id)).ToList();
+        foreach (var t in toUpdate) t.Priority = newPriority;
+        DbContext.SaveChanges();
+        ClearSelection();
+    }
+
+    private void HandleBulkDelete()
+    {
+        var toDelete = DbContext.TicketRequests.Where(t => selectedTicketIds.Contains(t.Id)).ToList();
+        DbContext.TicketRequests.RemoveRange(toDelete);
+        DbContext.SaveChanges();
+        ClearSelection();
+    }
+
+    private void ToggleColumn(string col)
+    {
+        if (collapsedColumns.Contains(col)) collapsedColumns.Remove(col);
+        else collapsedColumns.Add(col);
+    }
+
+    private void HandleDragStart(TicketRequest request)
+    {
+        draggedRequest = request;
+    }
+
+    private void HandleDragEnter(string status)
+    {
+        dragTargetStatus = status;
+    }
+
+    private void HandleDragLeave()
+    {
+        dragTargetStatus = "";
+    }
+
+    private void HandleDrop(string newStatus)
+    {
+        if (draggedRequest != null)
+        {
+            draggedRequest.Status = newStatus;
+            DbContext.SaveChanges();
+            draggedRequest = null;
+            dragTargetStatus = "";
+        }
+    }
+
+    private string sortColumn = "CreatedAt";
+    private bool sortAscending = false;
+
+    private void SortBy(string column)
+    {
+        if (sortColumn == column)
+        {
+            sortAscending = !sortAscending;
+        }
+        else
+        {
+            sortColumn = column;
+            sortAscending = true;
+        }
+    }
+
+    private string GetSortIcon(string column)
+    {
+        if (sortColumn != column) return "fas fa-sort text-muted ms-1 opacity-50";
+        return sortAscending ? "fas fa-sort-up text-primary ms-1" : "fas fa-sort-down text-primary ms-1";
+    }
+
+    private IEnumerable<TicketRequest> GetFilteredRequests()
+    {
+        var res = requests.AsEnumerable();
+
+        if (view == "pic_dashboard" && !string.IsNullOrEmpty(loginUsername))
+        {
+            res = res.Where(r => r.AssignedResource != null && r.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries).Any(p => string.Equals(p.Trim(), loginUsername, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        if (activeStatusFilter != null)
+        {
+            if (activeStatusFilter == "Urgent") res = res.Where(r => r.Priority == "High");
+            else if (activeStatusFilter == "Unassigned") res = res.Where(r => string.IsNullOrEmpty(r.AssignedResource));
+            else res = res.Where(r => r.Status == activeStatusFilter);
+        }
+
+        if (!string.IsNullOrWhiteSpace(searchQuery))
+        {
+            var q = searchQuery.ToLower();
+            res = res.Where(r => 
+                r.Id.ToLower().Contains(q) || 
+                r.RequesterName.ToLower().Contains(q) || 
+                (r.Description != null && r.Description.ToLower().Contains(q)) ||
+                (r.AssignedResource != null && r.AssignedResource.ToLower().Contains(q))
+            );
+        }
+        
+        var ordered = res;
+        switch (sortColumn)
+        {
+            case "Id": ordered = sortAscending ? ordered.OrderBy(r => r.QueueNumber ?? r.Id) : ordered.OrderByDescending(r => r.QueueNumber ?? r.Id); break;
+            case "Requester": ordered = sortAscending ? ordered.OrderBy(r => r.RequesterName) : ordered.OrderByDescending(r => r.RequesterName); break;
+            case "Priority": 
+                int GetPriorityScore(string p) => p == "High" ? 3 : p == "Medium" ? 2 : 1;
+                ordered = sortAscending ? ordered.OrderBy(r => GetPriorityScore(r.Priority)) : ordered.OrderByDescending(r => GetPriorityScore(r.Priority));
+                break;
+            case "TargetDate": ordered = sortAscending ? ordered.OrderBy(r => r.TargetDelivery) : ordered.OrderByDescending(r => r.TargetDelivery); break;
+            case "PIC": ordered = sortAscending ? ordered.OrderBy(r => r.AssignedResource) : ordered.OrderByDescending(r => r.AssignedResource); break;
+            case "Status": ordered = sortAscending ? ordered.OrderBy(r => r.Status) : ordered.OrderByDescending(r => r.Status); break;
+            default: ordered = sortAscending ? ordered.OrderBy(r => r.CreatedAt) : ordered.OrderByDescending(r => r.CreatedAt); break;
+        }
+        return ordered;
+    }
+
+    private void ToggleFilter(string? status)
+    {
+        activeStatusFilter = status;
+    }
+
+    protected override async Task OnInitializedAsync()
+    {
+        PresenceService.OnTicketPresenceChanged += HandlePresenceChanged;
+        PresenceService.OnNewTicketCreated += HandleNewTicketCreated;
+
+        var authState = await AuthStateProvider.GetAuthenticationStateAsync();
+        if (authState.User.Identity?.IsAuthenticated == true)
+        {
+            var name = authState.User.Identity.Name ?? "";
+            loggedInUserName = name.Replace(@"PERTAMINA\", "");
+            formData.RequesterName = loggedInUserName;
+        }
+        
+        LoadRequests();
+        
+        // Auto-login PIC or Admin if the website knows the user
+        if (!string.IsNullOrEmpty(loggedInUserName))
+        {
+            if (loggedInUserName.Equals("admin", StringComparison.OrdinalIgnoreCase) || 
+                loggedInUserName.Equals("nico.amando", StringComparison.OrdinalIgnoreCase))
+            {
+                // Master admin
+                loginUsername = loggedInUserName;
+                view = "admin_dashboard";
+                adminTab = "queue";
+                activeViewType = "list";
+            }
+            else if (teamMembers != null && teamMembers.Any(tm => string.Equals(tm.Name, loggedInUserName, StringComparison.OrdinalIgnoreCase)))
+            {
+                var user = teamMembers.First(tm => string.Equals(tm.Name, loggedInUserName, StringComparison.OrdinalIgnoreCase));
+                loginUsername = user.Name;
+                
+                // Route to admin portal if they have an admin-like role
+                if (user.Role == "System Admin" || user.Role == "Admin" || user.Role == "Fullstack Developer")
+                {
+                    view = "admin_dashboard";
+                }
+                else
+                {
+                    view = "pic_dashboard";
+                }
+                
+                adminTab = "queue";
+                activeViewType = "list";
+            }
+        }
+
+        isInitialLoading = true;
+        await Task.Delay(1000); // Simulate network delay for skeleton effect
+        isInitialLoading = false;
+    }
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        try 
+        {
+            await JS.InvokeVoidAsync("initTooltips");
+        }
+        catch { /* Ignore if JS interop not ready */ }
+    }
+
+    private void LoadRequests()
+    {
+        requests = DbContext.TicketRequests.Include(r => r.FollowUpNotes).OrderByDescending(r => r.CreatedAt).ToList();
+        teamMembers = DbContext.TeamMembers.ToList();
+    }
+
+    private async Task HandleTeamSubmit()
+    {
+        DbContext.TeamMembers.Add(newTeamMember);
+        await DbContext.SaveChangesAsync();
+        newTeamMember = new TeamMember();
+        successMsg = "New PIC personnel successfully added!";
+        LoadRequests();
+    }
+
+    private async Task HandleAssign(TicketRequest req, ChangeEventArgs e)
+    {
+        req.AssignedResource = e.Value?.ToString();
+        DbContext.TicketRequests.Update(req);
+        await DbContext.SaveChangesAsync();
+        successMsg = "Successfully assigned resource!";
+        LoadRequests();
+    }
+
+    private async Task HandleDeleteTeamMember(TeamMember tm)
+    {
+        DbContext.TeamMembers.Remove(tm);
+        await DbContext.SaveChangesAsync();
+        successMsg = $"Team member {tm.Name} deleted.";
+        LoadRequests();
+    }
+
+    private async Task ToggleAssign(TicketRequest req, string picName)
+    {
+        var currentPics = string.IsNullOrEmpty(req.AssignedResource) 
+            ? new List<string>() 
+            : req.AssignedResource.Split(',', StringSplitOptions.RemoveEmptyEntries).Select(p => p.Trim()).ToList();
+        
+        if (currentPics.Contains(picName, StringComparer.OrdinalIgnoreCase))
+        {
+            currentPics.RemoveAll(p => string.Equals(p, picName, StringComparison.OrdinalIgnoreCase));
+        }
+        else
+        {
+            currentPics.Add(picName);
+        }
+        
+        req.AssignedResource = currentPics.Any() ? string.Join(", ", currentPics) : null;
+        DbContext.TicketRequests.Update(req);
+        await DbContext.SaveChangesAsync();
+        successMsg = "Successfully updated resource assignment!";
+        LoadRequests();
+    }
+
+
+
+    private async Task HandleDeleteRequest(TicketRequest req)
+    {
+        if (selectedRequest == req) selectedRequest = null;
+        DbContext.TicketRequests.Remove(req);
+        await DbContext.SaveChangesAsync();
+        successMsg = "Request successfully deleted!";
+        LoadRequests();
+    }
+
+    private async Task HandleSendNote()
+    {
+        if (selectedRequest != null && !string.IsNullOrWhiteSpace(newNote))
+        {
+            var note = new FollowUpNote
+            {
+                TicketRequestId = selectedRequest.Id,
+                Note = newNote,
+                Date = DateTime.UtcNow,
+                SenderName = string.IsNullOrEmpty(loginUsername) ? selectedRequest.RequesterName : (view == "admin_dashboard" ? "Admin" : loginUsername)
+            };
+            DbContext.FollowUpNotes.Add(note);
+            
+            if (view == "public")
+            {
+                selectedRequest.HasUnreadUserMessage = true;
+            }
+            else
+            {
+                selectedRequest.HasUnreadUserMessage = false;
+            }
+            DbContext.TicketRequests.Update(selectedRequest);
+            
+            await DbContext.SaveChangesAsync();
+            newNote = "";
+            LoadRequests();
+            
+            // Re-bind selectedRequest to the updated one
+            selectedRequest = requests.FirstOrDefault(r => r.Id == selectedRequest.Id);
+        }
+    }
+
+    private void HandleFileSelected(InputFileChangeEventArgs e)
+    {
+        uploadedFile = e.File;
+        formData.AttachmentName = uploadedFile.Name;
+    }
+
+    private async Task HandleSubmitRequest()
+    {
+        isSubmitting = true;
+        StateHasChanged();
+        await Task.Delay(800); // UI UX enhancement for feeling the process
+
+        if (uploadedFile != null)
+        {
+            var uploadsPath = System.IO.Path.Combine(Env.WebRootPath, "uploads");
+            System.IO.Directory.CreateDirectory(uploadsPath);
+            
+            var fileName = Guid.NewGuid().ToString() + System.IO.Path.GetExtension(uploadedFile.Name);
+            var filePath = System.IO.Path.Combine(uploadsPath, fileName);
+            
+            using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Create);
+            await uploadedFile.OpenReadStream(maxAllowedSize: 10485760).CopyToAsync(fileStream); // 10MB max
+            
+            formData.AttachmentUrl = "/uploads/" + fileName;
+        }
+
+        var totalCount = DbContext.TicketRequests.Count();
+        formData.QueueNumber = $"TKT-{(totalCount + 1):D3}";
+
+        DbContext.TicketRequests.Add(formData);
+        await DbContext.SaveChangesAsync();
+        PresenceService.NotifyNewTicket();
+        
+        formData = new TicketRequest { TargetDelivery = DateTime.Today.AddDays(1), RequesterName = loggedInUserName };
+        uploadedFile = null;
+        activeTab = "queue";
+        successMsg = "Your request has been successfully submitted and added to the queue!";
+        LoadRequests();
+        isSubmitting = false;
+    }
+
+    private void HandlePicWorkspaceClick()
+    {
+        if (teamMembers.Any(tm => string.Equals(tm.Name, loggedInUserName, StringComparison.OrdinalIgnoreCase)))
+        {
+            var pic = teamMembers.First(tm => string.Equals(tm.Name, loggedInUserName, StringComparison.OrdinalIgnoreCase));
+            loginUsername = pic.Name;
+            view = "pic_dashboard";
+            adminTab = "queue";
+            activeViewType = "list";
+        }
+        else
+        {
+            view = "admin_login";
+        }
+        SetSelectedRequest(null);
+    }
+
+    private void HandleLogin()
+    {
+        if (loginUsername == "admin" && loginPassword == "admin123")
+        {
+            view = "admin_dashboard";
+            adminTab = "queue";
+            activeViewType = "list";
+            loginError = "";
+        }
+        else if (teamMembers.Any(tm => string.Equals(tm.Name, loginUsername, StringComparison.OrdinalIgnoreCase)))
+        {
+            view = "pic_dashboard";
+            adminTab = "queue";
+            activeViewType = "list";
+            loginError = "";
+        }
+        else
+        {
+            loginError = "Incorrect username or password!";
+        }
+    }
+
+    private void HandleLogout()
+    {
+        view = "public";
+        activeTab = "queue";
+    }
+
+    private string GetStatusBadgeClass(string status)
+    {
+        return status switch
+        {
+            "Waiting" => "bg-warning text-dark",
+            "In Progress" => "bg-info text-dark",
+            "Resolved" => "bg-success",
+            "Closed" => "bg-secondary",
+            _ => "bg-light text-dark border"
+        };
+    }
+
+
+}
