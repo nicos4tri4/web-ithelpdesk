@@ -237,7 +237,6 @@
             </div>
         </div>
     }
-    }
 
     @if (view == "public")
     {
@@ -671,7 +670,6 @@
                             int totalCount = baseReqs.Count();
                             int waitingCount = baseReqs.Count(r => r.Status == "Waiting");
                             int inProgressCount = baseReqs.Count(r => r.Status == "In Progress");
-                            int urgentCount = baseReqs.Count(r => r.Priority == "High");
                             
                             <div class="d-flex flex-column flex-md-row justify-content-between align-items-md-center gap-3 mb-3">
                                 <div class="d-flex flex-wrap gap-2 align-items-center">
@@ -683,9 +681,6 @@
                         </button>
                         <button class="btn btn-sm rounded-pill @(activeStatusFilter == "In Progress" ? "btn-info text-white shadow-sm" : "btn-light border text-secondary")" @onclick='() => activeStatusFilter = "In Progress"'>
                             <i class="fas fa-spinner"></i> In Progress <span class="badge bg-white text-dark ms-1 border shadow-sm">@inProgressCount</span>
-                        </button>
-                        <button class="btn btn-sm rounded-pill @(activeStatusFilter == "Urgent" ? "btn-danger shadow-sm" : "btn-light border text-secondary")" @onclick='() => activeStatusFilter = "Urgent"'>
-                            <i class="fas fa-exclamation-circle"></i> Urgent (High) <span class="badge bg-white text-dark ms-1 border shadow-sm">@urgentCount</span>
                         </button>
                     </div>
 
@@ -767,7 +762,8 @@
                             <span class="text-secondary fw-medium small">Group by:</span>
                             <select class="form-select form-select-sm" style="width: 150px;" @bind="swimlaneGroupBy">
                                 <option value="None">None</option>
-                                <option value="Priority">Priority</option>
+                                <option value="Status">Status</option>
+                                <option value="PIC">PIC</option>
                             </select>
                         </div>
                         <div class="d-flex align-items-center gap-2 fade-in">
@@ -777,10 +773,8 @@
                     </div>
                     
                     var swimlanes = new List<string> { "Default" };
-                    if (swimlaneGroupBy == "Priority")
-                    {
-                        swimlanes = new List<string> { "High", "Medium", "Low" };
-                    }
+                    if (swimlaneGroupBy == "Status") { swimlanes = new List<string> { "Waiting", "In Progress", "Resolved", "Closed" }; }
+                    else if (swimlaneGroupBy == "PIC") { swimlanes = teamMembers.Select(t => t.Name).ToList(); swimlanes.Add("Unassigned"); }
 
                     <div class="kanban-board-container overflow-x-auto pb-3 custom-scrollbar" style="min-height: 550px;">
                         @foreach (var swimlane in swimlanes)
@@ -788,21 +782,20 @@
                             @if (swimlaneGroupBy != "None")
                             {
                                 <div class="w-100 bg-white border rounded-3 p-2 fw-bold text-secondary mb-3 d-flex align-items-center gap-2 shadow-sm fade-in">
-                                    @if(swimlane == "High") { <span class="badge bg-danger">High Priority</span> }
-                                    else if(swimlane == "Medium") { <span class="badge bg-warning text-dark">Medium Priority</span> }
-                                    else { <span class="badge bg-primary">Low Priority</span> }
+                                    <span class="badge bg-secondary">@swimlane</span>
                                 </div>
                             }
 
                             <div class="d-flex flex-nowrap gap-3 mb-4" style="min-width: 100%;">
                                 @foreach (var statusCol in new[] { "Waiting", "In Progress", "Resolved", "Closed" })
                                 {
+                                    if (swimlaneGroupBy == "Status" && swimlane != statusCol) continue;
+                                    
                                     var isCollapsed = collapsedColumns.Contains(statusCol);
                                     var colTickets = GetFilteredRequests().Where(r => r.Status == statusCol);
-                                    if (swimlaneGroupBy == "Priority")
-                                    {
-                                        colTickets = colTickets.Where(r => r.Priority == swimlane);
-                                    }
+                                    if (swimlaneGroupBy == "Status") { colTickets = colTickets.Where(r => r.Status == swimlane); }
+                                    else if (swimlaneGroupBy == "PIC") { colTickets = colTickets.Where(r => (swimlane == "Unassigned" ? string.IsNullOrEmpty(r.AssignedResource) : (r.AssignedResource ?? "").Contains(swimlane))); }
+
                                     var ticketCount = colTickets.Count();
                                     var isOverLimit = statusCol == "In Progress" && ticketCount > wipLimitInProgress && wipLimitInProgress > 0;
                                     var isDragTarget = dragTargetStatus == statusCol;
@@ -855,7 +848,7 @@
                                                         var followUpCount = t.FollowUpNotes?.Count ?? 0;
                                                         
                                                         <div class="card kanban-card border-0 shadow-sm cursor-pointer position-relative bg-white @(selectedTicketIds.Contains(t.Id) ? "border border-primary shadow bg-primary bg-opacity-10" : "")" 
-                                                             style="border-left: 4px solid @(t.Priority == "High" ? "#dc3545" : t.Priority == "Medium" ? "#ffc107" : "#0d6efd") !important;"
+                                                             style="border-left: 4px solid @(t.Status == "Waiting" ? "#ffc107" : t.Status == "In Progress" ? "#0d6efd" : t.Status == "Resolved" ? "#198754" : "#6c757d") !important;"
                                                              draggable="true" 
                                                              @ondragstart="() => HandleDragStart(t)"
                                                              @onclick="() => SetSelectedRequest(t)">
@@ -872,7 +865,7 @@
                                                                 <button class="btn btn-sm btn-light py-0 px-1 text-primary me-1" @onclick:stopPropagation="true" @onclick="() => SetSelectedRequest(t)" title="Quick Chat"><i class="fas fa-comment-dots"></i></button>
                                                                 <div class="dropdown d-inline-block" @onclick:stopPropagation="true">
                                                                     <button class="btn btn-sm btn-light py-0 px-1 text-secondary" data-bs-toggle="dropdown"><i class="fas fa-ellipsis-v"></i></button>
-                                                                    <ul class="dropdown-menu shadow-sm" style="font-size: 0.8rem;">
+                                                                    <ul class="dropdown-menu dropdown-menu-end shadow-sm" style="font-size: 0.8rem;">
                                                                         <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => { t.Status = "In Progress"; DbContext.SaveChanges(); }'>Move to In Progress</a></li>
                                                                         <li><a class="dropdown-item" href="#" @onclick:preventDefault="true" @onclick='() => { t.Status = "Resolved"; DbContext.SaveChanges(); }'>Mark as Resolved</a></li>
                                                                     </ul>
@@ -882,7 +875,7 @@
                                                             <div class="card-body p-2 px-3">
                                                                 <div class="d-flex justify-content-between align-items-start mb-1">
                                                                     <div class="fw-bold text-dark text-truncate" style="font-size: 0.85rem; max-width: 80%;" title="@t.RequesterName">@t.RequesterName</div>
-                                                                    <span class="text-secondary fw-bold" style="font-size: 0.7rem;">@(!string.IsNullOrEmpty(t.QueueNumber) ? t.QueueNumber : t.Id.Substring(0, 8))</span>
+                                                                    <span class="text-primary fw-bold" style="font-size: 0.7rem;">@(!string.IsNullOrEmpty(t.QueueNumber) ? t.QueueNumber : t.Id.Substring(0, 8))</span>
                                                                 </div>
                                                                 <div class="text-secondary text-truncate mb-2" style="font-size: 0.75rem;" title="@t.Description">@t.Description</div>
                                                                 
@@ -943,17 +936,6 @@
                                 </ul>
                             </div>
                             
-                            <div class="dropdown dropup">
-                                <button class="btn btn-sm btn-dark text-white fw-medium dropdown-toggle border-0" data-bs-toggle="dropdown">
-                                    <i class="fas fa-flag me-1"></i> Priority
-                                </button>
-                                <ul class="dropdown-menu dropdown-menu-dark shadow mb-2">
-                                    <li><a class="dropdown-item text-danger" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("High")'>High</a></li>
-                                    <li><a class="dropdown-item text-warning" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("Medium")'>Medium</a></li>
-                                    <li><a class="dropdown-item text-primary" href="#" @onclick:preventDefault="true" @onclick='() => HandleBulkChangePriority("Low")'>Low</a></li>
-                                </ul>
-                            </div>
-                            
                             @if (view == "admin_dashboard")
                             {
                                 <button class="btn btn-sm btn-danger rounded-pill px-3 fw-medium ms-1" @onclick="HandleBulkDelete"><i class="fas fa-trash-alt me-1"></i> Delete</button>
@@ -975,12 +957,10 @@
                                                 {
                                                     <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Requester")'>Requester <i class="@GetSortIcon("Requester")"></i></th>
                                                 }
-                                                @if (view == "admin_dashboard")
-                                                {
-                                                    <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Priority")'>Priority <i class="@GetSortIcon("Priority")"></i></th>
-                                                }
+
+                                                <th class="fw-bold p-2 text-nowrap">Description</th>
                                                 <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("TargetDate")'>Target Date <i class="@GetSortIcon("TargetDate")"></i></th>
-                                                <th class="fw-bold p-2 text-nowrap">Links/Attach</th>
+                                                <th class="fw-bold p-2 text-nowrap text-center">Links/Attach</th>
                                                 <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("PIC")'>PIC <i class="@GetSortIcon("PIC")"></i></th>
                                                 <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Status")'>Status <i class="@GetSortIcon("Status")"></i></th>
                                                 <th class="fw-bold p-2 text-nowrap">Actions</th>
@@ -994,7 +974,7 @@
                                                     <tr>
                                                         <td class="p-2"><div class="skeleton-box" style="width: 60px; height: 16px;"></div></td>
                                                         <td class="p-2"><div class="skeleton-box" style="width: 120px; height: 16px;"></div></td>
-                                                        <td class="p-2"><div class="skeleton-box" style="width: 80px; height: 16px;"></div></td>
+                                                        <td class="p-2"><div class="skeleton-box" style="width: 150px; height: 16px;"></div></td>
                                                         <td class="p-2"><div class="skeleton-box" style="width: 30px; height: 30px; border-radius: 4px;"></div></td>
                                                         <td class="p-2"><div class="skeleton-box" style="width: 100px; height: 30px; border-radius: 4px;"></div></td>
                                                         <td class="p-2"><div class="skeleton-box" style="width: 100px; height: 30px; border-radius: 4px;"></div></td>
@@ -1014,8 +994,10 @@
                                                     foreach (var req in displayedRequests)
                                                     {
                                                         <tr>
-                                                            <td class="p-1 fw-bold align-middle @(req.Priority == "High" ? "text-danger" : req.Priority == "Medium" ? "text-warning" : "text-success")" title="Priority: @req.Priority">
-                                                                @(!string.IsNullOrEmpty(req.QueueNumber) ? req.QueueNumber : req.Id.Substring(0, 8))
+                                                            <td class="p-1 align-middle">
+                                                                <span class="fw-bold text-primary" title="Status: @req.Status">
+                                                                    @(!string.IsNullOrEmpty(req.QueueNumber) ? req.QueueNumber : req.Id.Substring(0, 8))
+                                                                </span>
                                                                 @if(req.HasUnreadUserMessage)
                                                                 {
                                                                     <span class="badge bg-danger ms-1 rounded-pill"><i class="fas fa-bell"></i> New</span>
@@ -1036,16 +1018,9 @@
                                                                     }
                                                                 </td>
                                                             }
-                                                            @if (view == "admin_dashboard")
-                                                            {
-                                                                <td class="p-1 align-middle">
-                                                                    <select class="form-select form-select-sm py-0" value="@req.Priority" @onchange="@(e => { req.Priority = e.Value?.ToString() ?? "Low"; DbContext.SaveChanges(); })">
-                                                                        <option value="Low">🟢 Low</option>
-                                                                        <option value="Medium">🟡 Medium</option>
-                                                                        <option value="High">🔴 High</option>
-                                                                    </select>
-                                                                </td>
-                                                            }
+                                                            <td class="p-1 align-middle">
+                                                                <div class="text-truncate text-secondary" style="max-width: 200px; font-size: 0.85rem;" title="@req.Description">@req.Description</div>
+                                                            </td>
                                                             <td class="p-1 align-middle">@req.TargetDelivery.ToString("dd/MM/yyyy")</td>
                                                             <td class="p-1 align-middle text-center text-nowrap">
                                                                 @if (!string.IsNullOrEmpty(req.AttachmentUrl))
@@ -1095,11 +1070,11 @@
                                                                 }
                                                             </td>
                                                             <td class="p-1 align-middle">
-                                                                <select class="form-select form-select-sm py-0" value="@req.Status" @onchange="@(e => { req.Status = e.Value?.ToString(); DbContext.SaveChanges(); })">
-                                                                    <option value="Waiting">Waiting</option>
-                                                                    <option value="In Progress">In Progress</option>
-                                                                    <option value="Resolved">Resolved</option>
-                                                                    <option value="Closed">Closed</option>
+                                                                <select class='form-select form-select-sm py-0 fw-bold @(req.Status == "Waiting" ? "text-warning" : req.Status == "In Progress" ? "text-primary" : req.Status == "Resolved" ? "text-success" : "text-secondary")' value="@req.Status" @onchange="@(e => { req.Status = e.Value?.ToString(); DbContext.SaveChanges(); })">
+                                                                    <option value="Waiting" class="text-warning fw-bold">Waiting</option>
+                                                                    <option value="In Progress" class="text-primary fw-bold">In Progress</option>
+                                                                    <option value="Resolved" class="text-success fw-bold">Resolved</option>
+                                                                    <option value="Closed" class="text-secondary fw-bold">Closed</option>
                                                                 </select>
                                                             </td>
                                                             <td class="p-1 align-middle text-nowrap">
@@ -1331,14 +1306,6 @@
         ClearSelection();
     }
 
-    private void HandleBulkChangePriority(string newPriority)
-    {
-        var toUpdate = DbContext.TicketRequests.Where(t => selectedTicketIds.Contains(t.Id)).ToList();
-        foreach (var t in toUpdate) t.Priority = newPriority;
-        DbContext.SaveChanges();
-        ClearSelection();
-    }
-
     private void HandleBulkDelete()
     {
         var toDelete = DbContext.TicketRequests.Where(t => selectedTicketIds.Contains(t.Id)).ToList();
@@ -1412,8 +1379,7 @@
 
         if (activeStatusFilter != null)
         {
-            if (activeStatusFilter == "Urgent") res = res.Where(r => r.Priority == "High");
-            else if (activeStatusFilter == "Unassigned") res = res.Where(r => string.IsNullOrEmpty(r.AssignedResource));
+            if (activeStatusFilter == "Unassigned") res = res.Where(r => string.IsNullOrEmpty(r.AssignedResource));
             else res = res.Where(r => r.Status == activeStatusFilter);
         }
 
@@ -1433,10 +1399,6 @@
         {
             case "Id": ordered = sortAscending ? ordered.OrderBy(r => r.QueueNumber ?? r.Id) : ordered.OrderByDescending(r => r.QueueNumber ?? r.Id); break;
             case "Requester": ordered = sortAscending ? ordered.OrderBy(r => r.RequesterName) : ordered.OrderByDescending(r => r.RequesterName); break;
-            case "Priority": 
-                int GetPriorityScore(string p) => p == "High" ? 3 : p == "Medium" ? 2 : 1;
-                ordered = sortAscending ? ordered.OrderBy(r => GetPriorityScore(r.Priority)) : ordered.OrderByDescending(r => GetPriorityScore(r.Priority));
-                break;
             case "TargetDate": ordered = sortAscending ? ordered.OrderBy(r => r.TargetDelivery) : ordered.OrderByDescending(r => r.TargetDelivery); break;
             case "PIC": ordered = sortAscending ? ordered.OrderBy(r => r.AssignedResource) : ordered.OrderByDescending(r => r.AssignedResource); break;
             case "Status": ordered = sortAscending ? ordered.OrderBy(r => r.Status) : ordered.OrderByDescending(r => r.Status); break;
@@ -1507,6 +1469,7 @@
         try 
         {
             await JS.InvokeVoidAsync("initTooltips");
+            await JS.InvokeVoidAsync("initDragToScroll");
         }
         catch { /* Ignore if JS interop not ready */ }
     }

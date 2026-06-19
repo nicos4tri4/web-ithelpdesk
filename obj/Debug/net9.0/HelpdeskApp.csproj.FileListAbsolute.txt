@@ -211,7 +211,6 @@ C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\System.Dire
 C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\runtimes\linux\lib\net9.0\System.DirectoryServices.Protocols.dll
 C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\runtimes\osx\lib\net9.0\System.DirectoryServices.Protocols.dll
 C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\runtimes\win\lib\net9.0\System.DirectoryServices.Protocols.dll
-C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\obj\Debug\net9.0\compressed\9ubxigz4xa-srs6qatr1f.gz
 C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\appsettings.Production.json
 c:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\publish_test\web.config
 c:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\publish_test\appsettings.Development.json
@@ -221,3 +220,5 @@ c:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\publish_tes
 c:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\publish_test\HelpdeskApp.runtimeconfig.json
 c:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\bin\Debug\net9.0\publish_test\HelpdeskApp.staticwebassets.endpoints.json
 C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\obj\Debug\net9.0\compressed\r4k5lkhhi1-ptlhf9kqhs.gz
+C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\obj\Debug\net9.0\HelpdeskApp.sourcelink.json
+C:\Users\nico.amando\Documents\Helpdesk\HelpdeskApp\obj\Debug\net9.0\compressed\9ubxigz4xa-yakcpr8zy6.gz
