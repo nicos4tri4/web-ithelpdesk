@@ -275,6 +275,17 @@
                         </button>
                     </div>
 
+                    @if (!isInitialLoading && !string.IsNullOrEmpty(loggedInUserName))
+                    {
+                        var hour = DateTime.Now.Hour;
+                        var greeting = hour < 12 ? "Good morning," : (hour < 17 ? "Good afternoon," : "Good evening,");
+                        var emoji = hour < 12 ? "☕" : (hour < 17 ? "☀️" : "🌙");
+                        
+                        <div class="d-none d-sm-flex align-items-center bg-light rounded-pill px-4 py-2 shadow-sm border me-2 fade-in">
+                            <span class="text-secondary fw-medium fs-5">@greeting <strong class="text-dark">@loggedInUserName</strong> @emoji</span>
+                        </div>
+                    }
+
                     @if (!string.IsNullOrEmpty(loginUsername))
                     {
                         var isSystemAdmin = loginUsername.Equals("admin", StringComparison.OrdinalIgnoreCase) || 
@@ -351,85 +362,6 @@
             }
             else
             {
-                <div class="bg-white p-4 rounded-3 border shadow-sm fade-in mb-4">
-                    <h5 class="fw-bold text-dark border-bottom pb-2 mb-4"><i class="fas fa-chart-pie text-primary"></i> Overall Status Distribution</h5>
-                    @{
-                        var allTotal = requests.Count;
-                        var allW = requests.Count(r => r.Status == "Waiting");
-                        var allI = requests.Count(r => r.Status == "In Progress");
-                        var allR = requests.Count(r => r.Status == "Resolved");
-                        var allC = requests.Count(r => r.Status == "Closed");
-
-                        var pW = allTotal > 0 ? (allW * 100.0 / allTotal) : 0;
-                        var pI = allTotal > 0 ? (allI * 100.0 / allTotal) : 0;
-                        var pR = allTotal > 0 ? (allR * 100.0 / allTotal) : 0;
-                        var pC = allTotal > 0 ? (allC * 100.0 / allTotal) : 0;
-
-                        var slices = new[] {
-                            new { Name = "Waiting", Count = allW, Percent = pW, Color = "#ffc107" },
-                            new { Name = "In Progress", Count = allI, Percent = pI, Color = "#0dcaf0" },
-                            new { Name = "Resolved", Count = allR, Percent = pR, Color = "#198754" },
-                            new { Name = "Closed", Count = allC, Percent = pC, Color = "#6c757d" }
-                        };
-                    }
-                    <div class="row align-items-center justify-content-center pt-3 pb-4">
-                        <div class="col-md-5 text-center mb-4 mb-md-0">
-                            <div class="d-inline-block" style="width: 180px; height: 180px; position: relative;">
-                                @if (allTotal == 0)
-                                {
-                                    <div style="width: 100%; height: 100%; border-radius: 50%; background: #e9ecef; box-shadow: inset 0 0 10px rgba(0,0,0,0.1);"></div>
-                                }
-                                else
-                                {
-                                    <svg viewBox="0 0 32 32" style="width: 100%; height: 100%; border-radius: 50%; transform: rotate(-90deg); box-shadow: inset 0 0 10px rgba(0,0,0,0.1);">
-                                        @{
-                                            double cumulativePercent = 0;
-                                            foreach (var slice in slices)
-                                            {
-                                                if (slice.Percent > 0)
-                                                {
-                                                    var isFiltered = activeStatusFilter != null && activeStatusFilter != slice.Name;
-                                                    <circle r="15.91549430918954" cx="16" cy="16" fill="none" stroke="@slice.Color" stroke-width="32" stroke-dasharray="@(slice.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture)) 100" stroke-dashoffset="-@(cumulativePercent.ToString(System.Globalization.CultureInfo.InvariantCulture))" 
-                                                            class="pie-slice @(isFiltered ? "filtered-out" : "")" 
-                                                            @onclick="() => ToggleFilter(slice.Name)" 
-                                                            data-bs-toggle="tooltip" data-bs-placement="top" title="@slice.Name: @slice.Count ticket(s) (@slice.Percent.ToString("0.#")%)">
-                                                    </circle>
-                                                    cumulativePercent += slice.Percent;
-                                                }
-                                            }
-                                        }
-                                    </svg>
-                                }
-                            </div>
-                        </div>
-                        <div class="col-md-5">
-                            <div class="p-4 glass-panel rounded-4 shadow-sm w-100">
-                                <h6 class="fw-bold text-secondary mb-3 small text-uppercase">Summary</h6>
-                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Waiting" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Waiting"))">
-                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #ffc107;"></span>Waiting</span> 
-                                    <span class="fw-bold text-dark">@allW <span class="text-muted small fw-normal">(@pW.ToString("0.#")%)</span></span>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "In Progress" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("In Progress"))">
-                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #0dcaf0;"></span>In Progress</span> 
-                                    <span class="fw-bold text-dark">@allI <span class="text-muted small fw-normal">(@pI.ToString("0.#")%)</span></span>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Resolved" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Resolved"))">
-                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #198754;"></span>Resolved</span> 
-                                    <span class="fw-bold text-dark">@allR <span class="text-muted small fw-normal">(@pR.ToString("0.#")%)</span></span>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center mb-3 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Closed" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Closed"))">
-                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #6c757d;"></span>Closed</span> 
-                                    <span class="fw-bold text-dark">@allC <span class="text-muted small fw-normal">(@pC.ToString("0.#")%)</span></span>
-                                </div>
-                                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
-                                    <span class="fw-bold text-dark">Total Tickets</span> 
-                                    <span class="fw-bold text-primary fs-5">@allTotal</span>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
                 <div class="d-flex justify-content-between align-items-center mb-3">
                     <h5 class="fw-bold text-dark m-0"><i class="fas fa-list text-primary me-2"></i> Ticket Queue</h5>
                     <div class="input-group" style="max-width: 300px;">
@@ -439,9 +371,9 @@
                 </div>
 
                 <div class="glass-panel rounded-0 border shadow-sm overflow-hidden fade-in">
-                    <div class="table-responsive custom-scrollbar" style="@(GetFilteredRequests().Count() > 10 ? "max-height: 550px; overflow-y: auto;" : "")">
+                    <div class="@(GetFilteredRequests().Count() > 10 ? "custom-scrollbar" : "")" style="@(GetFilteredRequests().Count() > 10 ? "overflow-x: hidden; max-height: 400px; overflow-y: auto;" : "")">
                         <table class="table table-sm table-bordered table-hover align-middle mb-0 text-secondary" style="font-size: 0.85rem;">
-                            <thead class="table-light text-dark">
+                            <thead class="table-light text-dark" style="position: sticky; top: 0; z-index: 10;">
                                 <tr>
                                     <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 10%" @onclick='() => SortBy("Id")'>Request ID <i class="@GetSortIcon("Id")"></i></th>
                                     <th class="fw-bold p-1 text-nowrap cursor-pointer hover-bg-light" style="width: 15%" @onclick='() => SortBy("Requester")'>Requester <i class="@GetSortIcon("Requester")"></i></th>
@@ -523,6 +455,92 @@
                                 }
                             </tbody>
                         </table>
+                    </div>
+                </div>
+
+                <div class="bg-white p-4 rounded-3 border shadow-sm fade-in mb-4">
+                    <div class="d-flex justify-content-between align-items-center mb-2">
+                        <h5 class="fw-bold text-dark mb-0"><i class="fas fa-chart-pie text-primary"></i> Overall Status Distribution</h5>
+                        <div class="d-flex align-items-center px-2 py-1 rounded-pill bg-light border shadow-sm" title="System is actively monitoring tickets">
+                            <span class="live-pulse bg-success rounded-circle me-2" style="width: 8px; height: 8px;"></span>
+                            <span class="small text-secondary fw-bold" style="font-size: 0.70rem; letter-spacing: 0.5px;">LIVE SYNC</span>
+                        </div>
+                    </div>
+                    <hr class="text-secondary mb-4" style="border-width: 3px; opacity: 0.4; border-radius: 2px;">
+                    @{
+                        var allTotal = requests.Count;
+                        var allW = requests.Count(r => r.Status == "Waiting");
+                        var allI = requests.Count(r => r.Status == "In Progress");
+                        var allR = requests.Count(r => r.Status == "Resolved");
+                        var allC = requests.Count(r => r.Status == "Closed");
+
+                        var pW = allTotal > 0 ? (allW * 100.0 / allTotal) : 0;
+                        var pI = allTotal > 0 ? (allI * 100.0 / allTotal) : 0;
+                        var pR = allTotal > 0 ? (allR * 100.0 / allTotal) : 0;
+                        var pC = allTotal > 0 ? (allC * 100.0 / allTotal) : 0;
+
+                        var slices = new[] {
+                            new { Name = "Waiting", Count = allW, Percent = pW, Color = "#ffc107" },
+                            new { Name = "In Progress", Count = allI, Percent = pI, Color = "#0dcaf0" },
+                            new { Name = "Resolved", Count = allR, Percent = pR, Color = "#198754" },
+                            new { Name = "Closed", Count = allC, Percent = pC, Color = "#6c757d" }
+                        };
+                    }
+                    <div class="row align-items-center justify-content-center pt-3 pb-4">
+                        <div class="col-md-5 text-center mb-4 mb-md-0">
+                            <div class="d-inline-block" style="width: 180px; height: 180px; position: relative;">
+                                @if (allTotal == 0)
+                                {
+                                    <div style="width: 100%; height: 100%; border-radius: 50%; background: #e9ecef; box-shadow: inset 0 0 10px rgba(0,0,0,0.1);"></div>
+                                }
+                                else
+                                {
+                                    <svg viewBox="0 0 32 32" style="width: 100%; height: 100%; border-radius: 50%; transform: rotate(-90deg); box-shadow: inset 0 0 10px rgba(0,0,0,0.1);">
+                                        @{
+                                            double cumulativePercent = 0;
+                                            foreach (var slice in slices)
+                                            {
+                                                if (slice.Percent > 0)
+                                                {
+                                                    var isFiltered = activeStatusFilter != null && activeStatusFilter != slice.Name;
+                                                    <circle r="15.91549430918954" cx="16" cy="16" fill="none" stroke="@slice.Color" stroke-width="32" stroke-dasharray="@(slice.Percent.ToString(System.Globalization.CultureInfo.InvariantCulture)) 100" stroke-dashoffset="-@(cumulativePercent.ToString(System.Globalization.CultureInfo.InvariantCulture))" 
+                                                            class="pie-slice @(isFiltered ? "filtered-out" : "")" 
+                                                            @onclick="() => ToggleFilter(slice.Name)" 
+                                                            data-bs-toggle="tooltip" data-bs-placement="top" title="@slice.Name: @slice.Count ticket(s) (@slice.Percent.ToString("0.#")%)">
+                                                    </circle>
+                                                    cumulativePercent += slice.Percent;
+                                                }
+                                            }
+                                        }
+                                    </svg>
+                                }
+                            </div>
+                        </div>
+                        <div class="col-md-5">
+                            <div class="p-4 glass-panel rounded-4 shadow-sm w-100">
+                                <h6 class="fw-bold text-secondary mb-3 small text-uppercase">Summary</h6>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Waiting" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Waiting"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #ffc107;"></span>Waiting</span> 
+                                    <span class="fw-bold text-dark">@allW <span class="text-muted small fw-normal">(@pW.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "In Progress" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("In Progress"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #0dcaf0;"></span>In Progress</span> 
+                                    <span class="fw-bold text-dark">@allI <span class="text-muted small fw-normal">(@pI.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-2 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Resolved" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Resolved"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #198754;"></span>Resolved</span> 
+                                    <span class="fw-bold text-dark">@allR <span class="text-muted small fw-normal">(@pR.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center mb-3 legend-clickable @(activeStatusFilter != null && activeStatusFilter != "Closed" ? "filtered-out" : "")" @onclick="@(() => ToggleFilter("Closed"))">
+                                    <span class="small fw-medium"><span class="d-inline-block rounded-circle me-2" style="width: 10px; height: 10px; background-color: #6c757d;"></span>Closed</span> 
+                                    <span class="fw-bold text-dark">@allC <span class="text-muted small fw-normal">(@pC.ToString("0.#")%)</span></span>
+                                </div>
+                                <div class="d-flex justify-content-between align-items-center pt-3 border-top">
+                                    <span class="fw-bold text-dark">Total Tickets</span> 
+                                    <span class="fw-bold text-primary fs-5">@allTotal</span>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             }
@@ -649,6 +667,17 @@
                             <p class="text-secondary small mb-0">@(view == "admin_dashboard" ? (adminTab == "team" ? "Manage IT resources." : "Manage queue.") : "Manage tickets assigned to you.")</p>
                         </div>
                     </div>
+
+                    @if (!string.IsNullOrEmpty(loginUsername))
+                    {
+                        var adminHour = DateTime.Now.Hour;
+                        var adminGreeting = adminHour < 12 ? "Good morning," : (adminHour < 17 ? "Good afternoon," : "Good evening,");
+                        var adminEmoji = adminHour < 12 ? "☕" : (adminHour < 17 ? "☀️" : "🌙");
+                        
+                        <div class="d-none d-sm-flex align-items-center bg-light rounded-pill px-4 py-2 shadow-sm border fade-in">
+                            <span class="text-secondary fw-medium fs-5">@adminGreeting <strong class="text-dark">@loginUsername</strong> @adminEmoji</span>
+                        </div>
+                    }
                 </div>
 
                     <div class="p-4 flex-grow-1">
@@ -847,7 +876,7 @@
                                                         var isDueToday = t.TargetDelivery.Date == DateTime.Today;
                                                         var followUpCount = t.FollowUpNotes?.Count ?? 0;
                                                         
-                                                        <div class="card kanban-card border-0 shadow-sm cursor-pointer position-relative bg-white @(selectedTicketIds.Contains(t.Id) ? "border border-primary shadow bg-primary bg-opacity-10" : "")" 
+                                                        <div class="card kanban-card border-0 shadow-sm cursor-pointer position-relative bg-white @(selectedTicketIds.Contains(t.Id) ? "border border-primary shadow bg-primary bg-opacity-10" : "") @(t.Id == recentlyDroppedId ? "drop-bounce-animation" : "")" 
                                                              style="border-left: 4px solid @(t.Status == "Waiting" ? "#ffc107" : t.Status == "In Progress" ? "#0d6efd" : t.Status == "Resolved" ? "#198754" : "#6c757d") !important;"
                                                              draggable="true" 
                                                              @ondragstart="() => HandleDragStart(t)"
@@ -948,9 +977,9 @@
                 else
                 {
                     <div class="glass-panel rounded-0 border shadow-sm overflow-hidden fade-in">
-                        <div class="table-responsive custom-scrollbar" style="@(GetFilteredRequests().Count() > 10 ? "max-height: 550px; overflow-y: auto;" : "")">
-                                    <table class="table table-hover table-bordered align-middle mb-0 text-secondary text-sm">
-                                        <thead class="table-light text-dark">
+                        <div class="@(GetFilteredRequests().Count() > 10 ? "custom-scrollbar" : "")" style="@(GetFilteredRequests().Count() > 10 ? "overflow-x: hidden; max-height: 400px; overflow-y: auto;" : "")">
+                            <table class="table table-hover table-bordered align-middle mb-0 text-secondary text-sm">
+                                        <thead class="table-light text-dark" style="position: sticky; top: 0; z-index: 10;">
                                             <tr>
                                                 <th class="fw-bold p-2 text-nowrap cursor-pointer hover-bg-light" @onclick='() => SortBy("Id")'>ID Request <i class="@GetSortIcon("Id")"></i></th>
                                                 @if (view == "admin_dashboard")
@@ -1125,9 +1154,9 @@
                     </div>
                     <div class="col-md-8">
                         <div class="glass-panel rounded-0 border shadow-sm overflow-hidden">
-                            <div class="table-responsive">
+                            <div class="@(teamMembers.Count > 10 ? "custom-scrollbar" : "")" style="@(teamMembers.Count > 10 ? "overflow-x: hidden; max-height: 400px; overflow-y: auto;" : "")">
                                 <table class="table table-hover table-bordered align-middle mb-0 text-secondary text-sm">
-                                    <thead class="table-light text-dark">
+                                    <thead class="table-light text-dark" style="position: sticky; top: 0; z-index: 10;">
                                         <tr>
                                             <th class="fw-medium p-3 text-nowrap">Username</th>
                                             <th class="fw-medium p-3 text-nowrap">Role</th>
@@ -1283,6 +1312,7 @@
     private DateTime currentMonth = DateTime.Today;
     private TicketRequest? draggedRequest;
     private string dragTargetStatus = "";
+    private string? recentlyDroppedId = null;
     private HashSet<string> collapsedColumns = new();
     private string swimlaneGroupBy = "None";
     private int wipLimitInProgress = 5;
@@ -1304,6 +1334,7 @@
         foreach (var t in toUpdate) t.Status = newStatus;
         DbContext.SaveChanges();
         ClearSelection();
+        LoadRequests();
     }
 
     private void HandleBulkDelete()
@@ -1312,6 +1343,7 @@
         DbContext.TicketRequests.RemoveRange(toDelete);
         DbContext.SaveChanges();
         ClearSelection();
+        LoadRequests();
     }
 
     private void ToggleColumn(string col)
@@ -1335,14 +1367,24 @@
         dragTargetStatus = "";
     }
 
-    private void HandleDrop(string newStatus)
+    private async Task HandleDrop(string newStatus)
     {
         if (draggedRequest != null)
         {
+            var droppedId = draggedRequest.Id;
             draggedRequest.Status = newStatus;
             DbContext.SaveChanges();
             draggedRequest = null;
             dragTargetStatus = "";
+            recentlyDroppedId = droppedId;
+            LoadRequests();
+            
+            // Clear animation class after delay
+            _ = Task.Run(async () => {
+                await Task.Delay(600);
+                recentlyDroppedId = null;
+                await InvokeAsync(StateHasChanged);
+            });
         }
     }
 
@@ -1387,10 +1429,11 @@
         {
             var q = searchQuery.ToLower();
             res = res.Where(r => 
-                r.Id.ToLower().Contains(q) || 
+                (!string.IsNullOrEmpty(r.QueueNumber) ? r.QueueNumber.ToLower() : r.Id.Substring(0, 8).ToLower()).Contains(q) ||
                 r.RequesterName.ToLower().Contains(q) || 
                 (r.Description != null && r.Description.ToLower().Contains(q)) ||
-                (r.AssignedResource != null && r.AssignedResource.ToLower().Contains(q))
+                (r.AssignedResource != null && r.AssignedResource.ToLower().Contains(q)) ||
+                (r.Status != null && r.Status.ToLower().Contains(q))
             );
         }
         
@@ -1435,7 +1478,6 @@
             {
                 // Master admin
                 loginUsername = loggedInUserName;
-                view = "admin_dashboard";
                 adminTab = "queue";
                 activeViewType = "list";
             }
@@ -1443,16 +1485,6 @@
             {
                 var user = teamMembers.First(tm => string.Equals(tm.Name, loggedInUserName, StringComparison.OrdinalIgnoreCase));
                 loginUsername = user.Name;
-                
-                // Route to admin portal if they have an admin-like role
-                if (user.Role == "System Admin" || user.Role == "Admin" || user.Role == "Fullstack Developer")
-                {
-                    view = "admin_dashboard";
-                }
-                else
-                {
-                    view = "pic_dashboard";
-                }
                 
                 adminTab = "queue";
                 activeViewType = "list";
@@ -1585,16 +1617,24 @@
 
         if (uploadedFile != null)
         {
-            var uploadsPath = System.IO.Path.Combine(Env.WebRootPath, "uploads");
-            System.IO.Directory.CreateDirectory(uploadsPath);
-            
-            var fileName = Guid.NewGuid().ToString() + System.IO.Path.GetExtension(uploadedFile.Name);
-            var filePath = System.IO.Path.Combine(uploadsPath, fileName);
-            
-            using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Create);
-            await uploadedFile.OpenReadStream(maxAllowedSize: 10485760).CopyToAsync(fileStream); // 10MB max
-            
-            formData.AttachmentUrl = "/uploads/" + fileName;
+            try 
+            {
+                var uploadsPath = System.IO.Path.Combine(Env.WebRootPath, "uploads");
+                System.IO.Directory.CreateDirectory(uploadsPath);
+                
+                var fileName = Guid.NewGuid().ToString() + System.IO.Path.GetExtension(uploadedFile.Name);
+                var filePath = System.IO.Path.Combine(uploadsPath, fileName);
+                
+                using var fileStream = new System.IO.FileStream(filePath, System.IO.FileMode.Create);
+                await uploadedFile.OpenReadStream(maxAllowedSize: 10485760).CopyToAsync(fileStream); // 10MB max
+                
+                formData.AttachmentUrl = "/uploads/" + fileName;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"File upload error: {ex.Message}");
+                // Proceed without file if it fails gracefully
+            }
         }
 
         var totalCount = DbContext.TicketRequests.Count();
@@ -1668,6 +1708,4 @@
             _ => "bg-light text-dark border"
         };
     }
-
-
 }
