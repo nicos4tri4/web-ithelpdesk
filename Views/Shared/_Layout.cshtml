@@ -36,6 +36,47 @@
             });
         }
     </script>
+    <div id="components-reconnect-modal" style="display: none !important;"></div>
+    <script>
+        window.addEventListener('DOMContentLoaded', () => {
+            const modal = document.getElementById('components-reconnect-modal');
+            if (!modal) return;
+
+            let isDisconnected = false;
+
+            const observer = new MutationObserver((mutations) => {
+                const dot = document.getElementById('sync-indicator-dot');
+                const text = document.getElementById('sync-indicator-text');
+                const container = document.getElementById('sync-indicator-container');
+
+                if (modal.classList.contains('components-reconnect-show') || 
+                    modal.classList.contains('components-reconnect-failed') || 
+                    modal.classList.contains('components-reconnect-rejected')) {
+                    if (!isDisconnected) {
+                        isDisconnected = true;
+                        if (dot) dot.className = "bg-danger rounded-circle me-2";
+                        if (text) {
+                            text.innerText = "DISCONNECTED";
+                            text.className = "small text-danger fw-bold";
+                        }
+                        if (container) container.title = "Connection to server lost. Reconnecting...";
+                    }
+                } else if (modal.classList.contains('components-reconnect-hide')) {
+                    if (isDisconnected) {
+                        isDisconnected = false;
+                        if (dot) dot.className = "live-pulse bg-success rounded-circle me-2";
+                        if (text) {
+                            text.innerText = "LIVE SYNC";
+                            text.className = "small text-secondary fw-bold";
+                        }
+                        if (container) container.title = "System is actively monitoring tickets";
+                    }
+                }
+            });
+
+            observer.observe(modal, { attributes: true, attributeFilter: ['class'] });
+        });
+    </script>
     <script src="_framework/blazor.server.js"></script>
     @await RenderSectionAsync("Scripts", required: false)
 </body>
